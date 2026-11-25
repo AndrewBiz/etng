@@ -54,6 +54,47 @@ pub fn parse(
     }
 }
 
+/// Parse a Canon MakerNote that lives inside a TIFF payload at `ifd_offset`.
+/// Canon value offsets are relative to the TIFF header, not the note block.
+pub fn parse_canon_at(
+    payload: &[u8],
+    ifd_offset: u32,
+    out: &mut Vec<Tag>,
+    warnings: &mut Vec<String>,
+    numeric: bool,
+) -> bool {
+    let Some(tiff) = Tiff::new(payload) else {
+        warnings.push("MakerNotes: Canon TIFF header missing".to_string());
+        return false;
+    };
+    let Some(ifd) = tiff.read_ifd(ifd_offset) else {
+        warnings.push("MakerNotes: Canon IFD missing".to_string());
+        return false;
+    };
+    let mut count = 0;
+    for entry in &ifd.entries {
+        let id = entry.tag.to_string();
+        let Some(def) = tables().find_table_id("Canon::Main", &id) else {
+            continue;
+        };
+        let Some(value) = entry_value(&tiff, entry) else {
+            continue;
+        };
+        if matches!(value, Value::Bytes(_)) {
+            continue;
+        }
+        let mut tag = Tag::new("MakerNotes", "Canon", def.name, value);
+        if !numeric && let Some(print) = def.print_value(&tag.value.display()) {
+            tag = tag.with_print(print);
+        }
+        out.push(tag);
+        count += 1;
+    }
+    crate::cr3::canon_tables(payload, ifd_offset, out, numeric);
+    crate::cr3::canon_fixups(out, numeric);
+    count > 0
+}
+
 fn vendor_of(make: Option<&str>) -> Option<&'static str> {
     let make = make?.to_ascii_uppercase();
     if make.contains("CANON") {

@@ -33,6 +33,7 @@ pub fn parse(
 
     let mut make: Option<String> = None;
     let mut maker_note: Option<Vec<u8>> = None;
+    let maker_offset = find_maker_note_offset(data);
 
     for field in exif.fields() {
         let g1 = match field.tag.context() {
@@ -120,6 +121,15 @@ pub fn parse(
 
     gps_prints(out);
     if let Some(note) = maker_note {
+        let is_canon = make
+            .as_deref()
+            .is_some_and(|text| text.to_ascii_uppercase().contains("CANON"));
+        if is_canon
+            && let Some(offset) = maker_offset
+            && makernotes::parse_canon_at(data, offset, out, warnings, numeric)
+        {
+            return;
+        }
         makernotes::parse(
             make.as_deref(),
             &note,
@@ -129,6 +139,33 @@ pub fn parse(
             numeric,
         );
     }
+}
+
+/// Locate the MakerNote value offset relative to the TIFF header.
+fn find_maker_note_offset(data: &[u8]) -> Option<u32> {
+    let tiff = crate::tiff::Tiff::new(data)?;
+    let mut queue = vec![tiff.first_ifd_offset()?];
+    let mut seen = std::collections::HashSet::new();
+    while let Some(offset) = queue.pop() {
+        if !seen.insert(offset) {
+            continue;
+        }
+        let Some(ifd) = tiff.read_ifd(offset) else {
+            continue;
+        };
+        for entry in &ifd.entries {
+            if entry.tag == 0x927C && entry.typ == 7 && entry.count > 4 {
+                return Some(entry.value_or_offset);
+            }
+            if matches!(entry.tag, 0x8769 | 0x8825 | 0xA005 | 0x014A) {
+                queue.push(entry.value_or_offset);
+            }
+        }
+        if ifd.next != 0 {
+            queue.push(ifd.next);
+        }
+    }
+    None
 }
 
 fn gps_prints(tags: &mut [Tag]) {

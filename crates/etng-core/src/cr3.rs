@@ -146,39 +146,11 @@ pub(crate) fn parse(data: &[u8], opts: &ReadOptions) -> (Vec<Tag>, Vec<String>, 
 
     let little_endian = data.windows(4).any(|w| w == b"II*\0");
 
-    if let Some(cmt3) = find_kind(data, b"CMT3") {
-        makernotes::parse(
-            Some("Canon"),
-            cmt3,
-            little_endian,
-            &mut tags,
-            &mut warnings,
-            opts.numeric,
-        );
-        canon_subtables(cmt3, &mut tags, opts.numeric);
-        canon_fixups(&mut tags, opts.numeric);
-        const HIDDEN: [&str; 19] = [
-            "CanonFlashInfo",
-            "AFPoint",
-            "DisplayAperture",
-            "SpotMeteringMode",
-            "PhotoEffect",
-            "SelfTimer2",
-            "FlashOutput",
-            "AFInfoSize",
-            "Canon_AFInfo2_0x000d",
-            "PrimaryAFPoint",
-            "FileNumber",
-            "ShutterCount",
-            "RawJpgQuality",
-            "LongExposureNoiseReduction2",
-            "FilterEffect",
-            "ToningEffect",
-            "MacroMagnification",
-            "FocalPlaneYSize",
-            "FocalPlaneYUnknown",
-        ];
-        tags.retain(|tag| !(tag.group1 == "Canon" && HIDDEN.contains(&tag.name)));
+    if let Some(cmt3) = find_kind(data, b"CMT3")
+        && let Some(tiff) = Tiff::new(cmt3)
+        && let Some(offset) = tiff.first_ifd_offset()
+    {
+        makernotes::parse_canon_at(cmt3, offset, &mut tags, &mut warnings, opts.numeric);
     }
     if let Some(payload) = find_kind(data, b"CNCV")
         && let Some(text) = payload.split(|byte| *byte == 0).next()
@@ -369,14 +341,11 @@ fn movie_header(payload: &[u8], tags: &mut Vec<Tag>) {
     }
 }
 
-fn canon_subtables(note: &[u8], tags: &mut Vec<Tag>, numeric: bool) {
-    let Some(tiff) = Tiff::new(note) else {
+pub(crate) fn canon_tables(payload: &[u8], ifd_offset: u32, tags: &mut Vec<Tag>, numeric: bool) {
+    let Some(tiff) = Tiff::new(payload) else {
         return;
     };
-    let Some(offset) = tiff.first_ifd_offset() else {
-        return;
-    };
-    let Some(ifd) = tiff.read_ifd(offset) else {
+    let Some(ifd) = tiff.read_ifd(ifd_offset) else {
         return;
     };
     for entry in &ifd.entries {
@@ -754,7 +723,7 @@ fn canon_custom(bytes: &[u8], le: bool, tags: &mut Vec<Tag>, numeric: bool) {
     }
 }
 
-fn canon_fixups(tags: &mut [Tag], numeric: bool) {
+pub(crate) fn canon_fixups(tags: &mut Vec<Tag>, numeric: bool) {
     for tag in tags.iter_mut() {
         if tag.group1 != "Canon" {
             continue;
@@ -892,6 +861,28 @@ fn canon_fixups(tags: &mut [Tag], numeric: bool) {
             tag.print = None;
         }
     }
+    const HIDDEN: [&str; 19] = [
+        "CanonFlashInfo",
+        "AFPoint",
+        "DisplayAperture",
+        "SpotMeteringMode",
+        "PhotoEffect",
+        "SelfTimer2",
+        "FlashOutput",
+        "AFInfoSize",
+        "Canon_AFInfo2_0x000d",
+        "PrimaryAFPoint",
+        "FileNumber",
+        "ShutterCount",
+        "RawJpgQuality",
+        "LongExposureNoiseReduction2",
+        "FilterEffect",
+        "ToningEffect",
+        "MacroMagnification",
+        "FocalPlaneYSize",
+        "FocalPlaneYUnknown",
+    ];
+    tags.retain(|tag| !(tag.group1 == "Canon" && HIDDEN.contains(&tag.name)));
 }
 
 fn thumbnail(payload: &[u8], tags: &mut Vec<Tag>) {

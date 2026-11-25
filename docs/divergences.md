@@ -47,7 +47,11 @@ tag parity.
   GPS coordinates/altitude/time, LensInfo, version words). Tags outside that
   set fall back to the raw value; `-n` always yields the machine value.
 - **MakerNotes** support is a subset: Canon, Nikon, Sony and a flat Apple IFD.
-  Unknown vendors produce a warning and no tags.
+  Canon notes are now parsed relative to the TIFF header (JPEG/CR2/CR3), including
+  nested AF/Lighting/Time tables. ColorData, FilterInfo and full CanonCustom are
+  still missing. Unknown vendors produce a warning and no tags.
+- **ARW** is detected via `Make=SONY` + extension, but SubIFD images and some Sony
+  nested tables are not read yet; PNG and video containers remain unsupported.
 - **DNG/NEF/CR2 detection** uses the file extension to disambiguate TIFF-family
   containers when the signature alone is ambiguous (exiftool does the same for
   extension-based TIFF variants). CR2 preview tags (273/279) are re-interpreted

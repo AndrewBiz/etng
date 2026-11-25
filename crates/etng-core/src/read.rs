@@ -85,7 +85,7 @@ fn parse(data: &[u8], file_type: FileType, opts: &ReadOptions) -> ParseResult {
     match file_type {
         FileType::Jpeg => parse_jpeg(data, opts),
         FileType::Cr3 => crate::cr3::parse(data, opts),
-        FileType::Tiff | FileType::Dng | FileType::Cr2 | FileType::Nef => {
+        FileType::Tiff | FileType::Dng | FileType::Cr2 | FileType::Nef | FileType::Arw => {
             parse_tiff(data, file_type, opts)
         }
         FileType::Heic => parse_heic(data, opts),

@@ -5,7 +5,7 @@ ExifTool нового поколения: быстрый read-only CLI на Rust
 
 ## Возможности
 
-- JPEG, TIFF, DNG, CR2, CR3, NEF, HEIC/HEIF; EXIF, IPTC, XMP, GPS, MakerNotes
+- JPEG, TIFF, DNG, CR2, CR3, NEF, ARW, HEIC/HEIF; EXIF, IPTC, XMP, GPS, MakerNotes
   (Canon, Nikon, Sony, плоский Apple IFD), IFD1 thumbnail-теги.
 - JSON-вывод в формате `exiftool -j`: порядок полей, `-G`/`-G1`, `-s`, `-n`,
   печатные конверсии, `ExifToolVersion` = версия совместимости (13.55).

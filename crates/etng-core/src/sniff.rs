@@ -9,6 +9,7 @@ pub enum FileType {
     Dng,
     Cr2,
     Cr3,
+    Arw,
     Nef,
     Heic,
     Unknown,
@@ -22,6 +23,7 @@ impl FileType {
             FileType::Dng => "DNG",
             FileType::Cr2 => "CR2",
             FileType::Cr3 => "CR3",
+            FileType::Arw => "ARW",
             FileType::Nef => "NEF",
             FileType::Heic => "HEIC",
             FileType::Unknown => "Unknown",
@@ -35,6 +37,7 @@ impl FileType {
             FileType::Dng => "dng",
             FileType::Cr2 => "cr2",
             FileType::Cr3 => "cr3",
+            FileType::Arw => "arw",
             FileType::Nef => "nef",
             FileType::Heic => "heic",
             FileType::Unknown => "",
@@ -48,6 +51,7 @@ impl FileType {
             FileType::Dng => "image/x-adobe-dng",
             FileType::Cr2 => "image/x-canon-cr2",
             FileType::Cr3 => "image/x-canon-cr3",
+            FileType::Arw => "image/x-sony-arw",
             FileType::Nef => "image/x-nikon-nef",
             FileType::Heic => "image/heic",
             FileType::Unknown => "application/octet-stream",
@@ -99,6 +103,12 @@ pub fn detect_with_hint(data: &[u8], extension: Option<&str>) -> FileType {
             if make.contains("NIKON") {
                 return FileType::Nef;
             }
+            if make.contains("SONY") && hint == "arw" {
+                return FileType::Arw;
+            }
+        }
+        if hint == "arw" {
+            return FileType::Arw;
         }
         if hint == "nef" {
             return FileType::Nef;
