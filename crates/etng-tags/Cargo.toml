@@ -3,5 +3,5 @@ name = "etng-tags"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
-license.workspace = true
+license = "MIT AND Artistic-1.0-Perl"
 description = "ExifTool tag tables generated from `exiftool -listx`"

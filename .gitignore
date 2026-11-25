@@ -1,2 +1,7 @@
 /target
 *.tmp
+
+# local-only vendor corpus (CC BY-SA 4.0, not redistributed)
+tests/corpus/real/Canon_40D*
+tests/corpus/real/Nikon_D70*
+tests/corpus/real/Sony_HDR-HC3*
