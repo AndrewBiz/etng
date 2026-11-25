@@ -62,6 +62,14 @@ tag parity.
 - **`-b` without a tag selection** follows etng's stored values. Tags kept as
   normalized strings (for example `ExifVersion` or `YCbCrSubSampling`) may
   differ from exiftool's raw byte-list form; use `-b -TAG` for extraction.
+- **CSV columns** are the union of etng's emitted tags. Groups documented as
+  absent (`Apple:`, `QuickTime:`, ICC, `Meta:`) therefore add no columns, so a
+  CSV header can be shorter than exiftool's. Shared cells inherit the value
+  differences listed above (`ThumbnailOffset`, `FocalLength35efl`, …).
+- **CSV without `-TAG`** reads the input twice: the first pass collects column
+  names, the second writes rows. Memory stays bounded; `-TAG` uses one pass.
+- **`-x`** filters output only: it removes fields and CSV columns but does not
+  skip parsing or composite computation, matching exiftool semantics.
 - **XMP multi-values** are joined with `, ` and represented as strings, except
   booleans (`True`/`False` → JSON `true`/`false`) and numeric/rational strings
   which become JSON numbers.

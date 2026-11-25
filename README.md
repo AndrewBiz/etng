@@ -13,6 +13,9 @@ ExifTool нового поколения: быстрый read-only CLI на Rust
   параллельная пакетная обработка с детерминированным порядком.
 - `-b`/`--binary`: сырые байты в stdout (миниатюры, превью CR2) и
   `"base64:<data>"` в JSON; скаляры без print-conversion.
+- `-csv`: табличный вывод, `SourceFile` + колонки тегов; union колонок по
+  алфавиту без выбора, порядок аргументов при `-TAG`.
+- `-x TAG`/`-x GROUP:TAG`: исключение тегов из JSON, текста, `-b` и CSV.
 - Гибридный fallback на системный `exiftool` (`auto|never|always`,
   переменная `ETNG_FALLBACK`), вызов без shell.
 - Коды возврата: 0 — успех, 1 — предупреждения/частичные результаты,
@@ -36,6 +39,9 @@ etng -j -r -ext jpg -ext heic arch/   # рекурсивный пакетный 
 etng -j --fallback=never weird.pdf    # без делегирования
 etng -b -ThumbnailImage photo.jpg > thumb.jpg
 etng -j -b -ThumbnailImage photo.jpg  # base64 в JSON
+etng -csv -r -ext jpg ~/Photos > all.csv
+etng -csv -Make -Model -x Model photo.jpg
+etng -j -x MakerNotes photo.jpg       # исключить шумный тег
 etng -ver                             # версия совместимости
 ```
 

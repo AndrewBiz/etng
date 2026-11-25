@@ -575,12 +575,15 @@ fn push_post_composites(tags: &mut Vec<Tag>) {
     {
         let light_value = (aperture * aperture / exposure).log2() - (iso / 100.0).log2();
         let rounded = (light_value * 10.0).round() / 10.0;
-        tags.push(Tag::new(
-            "Composite",
-            "Composite",
-            "LightValue",
-            Value::Float(rounded),
-        ));
+        tags.push(
+            Tag::new(
+                "Composite",
+                "Composite",
+                "LightValue",
+                Value::Float(rounded),
+            )
+            .with_print(format!("{rounded:.1}")),
+        );
     }
 }
 

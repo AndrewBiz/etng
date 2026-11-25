@@ -108,6 +108,64 @@ impl Tables {
         &self.group_names
     }
 
+    /// Resolve a `TAG`/`GROUP:TAG` selection to canonical case and groups.
+    pub fn canonical(&self, selection: &str) -> Option<(&'static str, &'static str, &'static str)> {
+        let (group, name) = match selection.split_once(':') {
+            Some((group, name)) => (Some(group), name),
+            None => (None, selection),
+        };
+        if group.is_none() {
+            // Prefer the group ExifTool uses for the default rendering, so
+            // `-G1 -Make` becomes `IFD0:Make`, not a vendor table.
+            const PREFERRED: [&str; 15] = [
+                "IFD0",
+                "IFD1",
+                "ExifIFD",
+                "GPS",
+                "InteropIFD",
+                "IPTC",
+                "XMP-dc",
+                "XMP-exif",
+                "XMP-photoshop",
+                "XMP-xmp",
+                "XMP-xmpMM",
+                "XMP-crs",
+                "XMP-tiff",
+                "Composite",
+                "File",
+            ];
+            for candidate in PREFERRED {
+                for line in self.raw.lines() {
+                    let mut fields = line.split('\t');
+                    let g0 = fields.next().unwrap_or_default();
+                    let g1 = fields.next().unwrap_or_default();
+                    let _table = fields.next().unwrap_or_default();
+                    let _id = fields.next().unwrap_or_default();
+                    let tag = fields.next().unwrap_or_default();
+                    if g1 == candidate && tag.eq_ignore_ascii_case(name) {
+                        return Some((g0, g1, tag));
+                    }
+                }
+            }
+        }
+        for line in self.raw.lines() {
+            let mut fields = line.split('\t');
+            let g0 = fields.next().unwrap_or_default();
+            let g1 = fields.next().unwrap_or_default();
+            let _table = fields.next().unwrap_or_default();
+            let _id = fields.next().unwrap_or_default();
+            let tag = fields.next().unwrap_or_default();
+            if tag.eq_ignore_ascii_case(name)
+                && group.is_none_or(|group| {
+                    group.eq_ignore_ascii_case(g0) || group.eq_ignore_ascii_case(g1)
+                })
+            {
+                return Some((g0, g1, tag));
+            }
+        }
+        None
+    }
+
     /// Distinct tag names known for a family 1 group, in table order.
     pub fn names_in_group(&self, g1: &str) -> Vec<&'static str> {
         let mut out: Vec<&'static str> = Vec::new();

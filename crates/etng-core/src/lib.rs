@@ -16,6 +16,7 @@
 pub mod base64;
 pub mod compare;
 pub mod compat;
+pub mod csv;
 pub mod exif;
 pub mod formatting;
 pub mod heic;
@@ -27,6 +28,7 @@ pub mod model;
 pub mod options;
 pub mod read;
 pub mod sniff;
+pub mod system;
 pub mod tiff;
 pub mod xmp;
 

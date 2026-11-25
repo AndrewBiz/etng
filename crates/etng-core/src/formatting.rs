@@ -55,6 +55,20 @@ pub fn human_size(bytes: u64) -> String {
     format!("{text} {}", UNITS[unit])
 }
 
+/// Strings that look like plain decimal numbers become number text, unless
+/// they carry significant leading zeros (`0232` must stay a string).
+pub fn numeric_string(text: &str) -> Option<String> {
+    let number: f64 = text.parse().ok()?;
+    let unsigned = text.trim_start_matches(['-', '+']);
+    if unsigned.len() > 1 && unsigned.starts_with('0') && !unsigned.starts_with("0.") {
+        return None;
+    }
+    if text.starts_with('+') {
+        return None;
+    }
+    Some(format_float(number))
+}
+
 /// `YYYY:MM:DD HH:MM:SS+HH:MM` in local time, as ExifTool prints it.
 pub fn format_datetime(time: Option<SystemTime>) -> String {
     let Some(time) = time else {

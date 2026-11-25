@@ -391,3 +391,192 @@ fn binary_errors_stay_off_stdout() {
     assert!(String::from_utf8_lossy(&output.stderr).contains("Unknown file type"));
     let _ = fs::remove_dir_all(dir);
 }
+
+#[test]
+fn csv_selected_columns_follow_arguments_and_case() {
+    let output = Command::new(bin())
+        .args([
+            "-csv",
+            "-model",
+            "-make",
+            corpus("real/Canon_40D.jpg").to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let text = String::from_utf8(output.stdout).unwrap();
+    let mut lines = text.lines();
+    assert_eq!(lines.next(), Some("SourceFile,Model,Make"));
+    assert!(lines.next().unwrap().ends_with(",Canon EOS 40D,Canon"));
+}
+
+#[test]
+fn csv_group_prefix_and_values() {
+    let output = Command::new(bin())
+        .args([
+            "-csv",
+            "-G1",
+            "-Make",
+            "-Orientation",
+            corpus("real/Canon_40D.jpg").to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let text = String::from_utf8(output.stdout).unwrap();
+    let mut lines = text.lines();
+    assert_eq!(lines.next(), Some("SourceFile,IFD0:Make,IFD0:Orientation"));
+    assert!(
+        lines
+            .next()
+            .unwrap()
+            .ends_with(",Canon,Horizontal (normal)")
+    );
+}
+
+#[test]
+fn csv_union_header_is_alphabetical_and_missing_cells_are_empty() {
+    let output = Command::new(bin())
+        .args([
+            "-csv",
+            corpus("real/Canon_40D.jpg").to_str().unwrap(),
+            corpus("synthetic/base.jpg").to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let text = String::from_utf8(output.stdout).unwrap();
+    let mut lines = text.lines();
+    let header: Vec<&str> = lines.next().unwrap().split(',').collect();
+    assert_eq!(header[0], "SourceFile");
+    let columns = &header[1..];
+    let mut sorted = columns.to_vec();
+    sorted.sort_unstable();
+    assert_eq!(columns, sorted.as_slice());
+    assert!(columns.contains(&"City"));
+    assert!(columns.contains(&"Make"));
+
+    let base_row = lines
+        .find(|line| line.starts_with(corpus("synthetic/base.jpg").to_str().unwrap()))
+        .unwrap();
+    let fields: Vec<&str> = base_row.split(',').collect();
+    let city = header.iter().position(|column| *column == "City").unwrap();
+    assert!(fields[city].contains("Москва"));
+}
+
+#[test]
+fn csv_quotes_values_with_commas_and_quotes() {
+    let output = Command::new(bin())
+        .args([
+            "-csv",
+            "-ComponentsConfiguration",
+            corpus("real/Canon_40D.jpg").to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let text = String::from_utf8(output.stdout).unwrap();
+    assert!(text.contains("\"Y, Cb, Cr, -\""), "{text}");
+}
+
+#[test]
+fn csv_binary_values_use_base64() {
+    let output = Command::new(bin())
+        .args([
+            "-csv",
+            "-b",
+            "-ThumbnailImage",
+            corpus("real/Canon_40D.jpg").to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let text = String::from_utf8(output.stdout).unwrap();
+    assert!(text.contains(",base64:/9j/"), "{text}");
+}
+
+#[test]
+fn csv_numeric_mode_and_precedence_over_json() {
+    let output = Command::new(bin())
+        .args([
+            "-csv",
+            "-j",
+            "-n",
+            "-Orientation",
+            "-FileSize",
+            corpus("real/Canon_40D.jpg").to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let text = String::from_utf8(output.stdout).unwrap();
+    let mut lines = text.lines();
+    assert_eq!(lines.next(), Some("SourceFile,Orientation,FileSize"));
+    let row = lines.next().unwrap();
+    assert!(row.ends_with(",1,7958"), "{row}");
+}
+
+#[test]
+fn exclude_removes_fields_and_columns() {
+    let file = corpus("real/Canon_40D.jpg");
+    let json = Command::new(bin())
+        .args([
+            "-j",
+            "-Make",
+            "-Model",
+            "-x",
+            "Model",
+            file.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    let parsed: serde_json::Value = serde_json::from_slice(&json.stdout).unwrap();
+    assert!(parsed[0].get("Make").is_some());
+    assert!(parsed[0].get("Model").is_none());
+
+    let csv = Command::new(bin())
+        .args([
+            "-csv",
+            "-Make",
+            "-Model",
+            "-x",
+            "Model",
+            file.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    let text = String::from_utf8(csv.stdout).unwrap();
+    assert_eq!(text.lines().next(), Some("SourceFile,Make"));
+}
+
+#[test]
+fn exclude_group_is_supported() {
+    let output = Command::new(bin())
+        .args([
+            "-j",
+            "-x",
+            "IFD0:Make",
+            corpus("real/Canon_40D.jpg").to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    let parsed: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert!(parsed[0].get("Make").is_none());
+    assert!(parsed[0].get("Model").is_some());
+}
+
+#[test]
+fn unknown_exclude_is_not_a_usage_error() {
+    let output = Command::new(bin())
+        .args([
+            "-j",
+            "-x",
+            "NoSuchTag",
+            corpus("real/Canon_40D.jpg").to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let parsed: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert!(parsed[0].get("Make").is_some());
+}

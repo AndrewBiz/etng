@@ -4,7 +4,7 @@ use std::collections::HashSet;
 use std::io::{self, Write};
 
 use crate::compat::REPORTED_EXIFTOOL_VERSION;
-use crate::formatting::format_float;
+use crate::formatting::{format_float, numeric_string};
 use crate::model::{FileReport, SystemFields, Tag, Value};
 use crate::options::{GroupMode, ReadOptions};
 
@@ -68,7 +68,7 @@ impl<W: Write> Emitter<W> {
         self.system_fields(&report.system, &mut field_count, &mut seen)?;
 
         for tag in &report.tags {
-            if !self.opts.selects(tag.group0, tag.group1, tag.name) {
+            if !self.opts.wants(tag.group0, tag.group1, tag.name) {
                 continue;
             }
             let key = self.key(tag.group0, tag.group1, tag.name);
@@ -143,7 +143,7 @@ impl<W: Write> Emitter<W> {
         ];
 
         for (group0, group1, name, value) in entries {
-            if !self.opts.selects(group0, group1, name) {
+            if !self.opts.wants(group0, group1, name) {
                 continue;
             }
             let key = self.key(group0, group1, name);
@@ -219,20 +219,6 @@ impl<W: Write> Emitter<W> {
 
 fn json_string(value: &str) -> String {
     serde_json::to_string(value).unwrap_or_else(|_| "\"\"".to_string())
-}
-
-/// Strings that look like plain decimal numbers become JSON numbers, unless
-/// they carry significant leading zeros (`0232` must stay a string).
-fn numeric_string(text: &str) -> Option<String> {
-    let number: f64 = text.parse().ok()?;
-    let unsigned = text.trim_start_matches(['-', '+']);
-    if unsigned.len() > 1 && unsigned.starts_with('0') && !unsigned.starts_with("0.") {
-        return None;
-    }
-    if text.starts_with('+') {
-        return None;
-    }
-    Some(format_float(number))
 }
 
 #[cfg(test)]

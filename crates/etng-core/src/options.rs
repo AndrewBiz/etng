@@ -32,8 +32,12 @@ pub struct ReadOptions {
     pub quiet: bool,
     /// `-b`: emit binary values raw (text) or as `base64:` strings (JSON).
     pub binary: bool,
+    /// `-csv`: one row per file with a header.
+    pub csv: bool,
     /// Selected tags, normalized to uppercase: `TAG` or `GROUP:TAG`.
     pub selection: Vec<String>,
+    /// Excluded tags, normalized to uppercase: `TAG` or `GROUP:TAG`.
+    pub exclude: Vec<String>,
     pub fallback: FallbackMode,
 }
 
@@ -45,7 +49,9 @@ impl Default for ReadOptions {
             short: false,
             quiet: false,
             binary: false,
+            csv: false,
             selection: Vec::new(),
+            exclude: Vec::new(),
             fallback: FallbackMode::Auto,
         }
     }
@@ -58,6 +64,24 @@ impl ReadOptions {
         }
         let name = name.to_ascii_uppercase();
         self.selection.iter().any(|sel| match sel.split_once(':') {
+            Some((group, tag)) => {
+                tag == name
+                    && (group.eq_ignore_ascii_case(group0) || group.eq_ignore_ascii_case(group1))
+            }
+            None => *sel == name,
+        })
+    }
+
+    pub fn wants(&self, group0: &str, group1: &str, name: &str) -> bool {
+        self.selects(group0, group1, name) && !self.is_excluded(group0, group1, name)
+    }
+
+    pub fn is_excluded(&self, group0: &str, group1: &str, name: &str) -> bool {
+        if self.exclude.is_empty() {
+            return false;
+        }
+        let name = name.to_ascii_uppercase();
+        self.exclude.iter().any(|sel| match sel.split_once(':') {
             Some((group, tag)) => {
                 tag == name
                     && (group.eq_ignore_ascii_case(group0) || group.eq_ignore_ascii_case(group1))

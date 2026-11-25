@@ -51,6 +51,13 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Cli, String> {
             "-n" => cli.opts.numeric = true,
             "-q" => cli.opts.quiet = true,
             "-b" | "-binary" | "--binary" => cli.opts.binary = true,
+            "-csv" | "--csv" => cli.opts.csv = true,
+            "-x" | "--exclude" => {
+                let value = iter
+                    .next()
+                    .ok_or_else(|| format!("{arg} requires a tag name"))?;
+                cli.opts.exclude.push(normalize_exclude(&value));
+            }
             "-r" => cli.recursive = true,
             "-ver" => cli.show_version = true,
             "-h" | "--help" => cli.show_help = true,
@@ -81,6 +88,12 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Cli, String> {
                     cli.fallback_explicit = true;
                 } else if let Some(value) = other.strip_prefix("-ext=") {
                     cli.extensions.push(normalize_ext(value));
+                } else if let Some(value) = other.strip_prefix("--exclude=") {
+                    cli.opts.exclude.push(normalize_exclude(value));
+                } else if let Some(value) = other.strip_prefix("-x")
+                    && !value.is_empty()
+                {
+                    cli.opts.exclude.push(normalize_exclude(value));
                 } else {
                     let selection = other.trim_start_matches('-').to_string();
                     if selection.is_empty() {
@@ -106,6 +119,10 @@ fn normalize_ext(value: &str) -> String {
     value.trim_start_matches('.').to_ascii_lowercase()
 }
 
+fn normalize_exclude(value: &str) -> String {
+    value.trim_start_matches('-').to_ascii_uppercase()
+}
+
 fn parse_threads(value: &str) -> Result<usize, String> {
     let threads: usize = value
         .parse()
@@ -128,6 +145,11 @@ fn parse_fallback(value: &str) -> Result<FallbackMode, String> {
 }
 
 fn tag_exists(selection: &str) -> bool {
+    if selection.eq_ignore_ascii_case("EXIFTOOLVERSION")
+        || selection.eq_ignore_ascii_case("EXIFTOOL:EXIFTOOLVERSION")
+    {
+        return true;
+    }
     let tables = etng_tags::tables();
     match selection.split_once(':') {
         Some((group, name)) => tables.has_group_name(group, name),
@@ -147,6 +169,8 @@ Options:
   -n               машинные значения без печатных конверсий
   -q               подавить некритичные предупреждения
   -b, -binary      сырые значения: байты в stdout, base64 в JSON
+  -csv             CSV-таблица: SourceFile + колонки тегов
+  -x TAG           исключить тег (повторяемый), -x GROUP:TAG
   -r               рекурсивный обход каталогов
   -ext EXT         фильтр по расширению (можно повторять)
   -TAG, -GROUP:TAG выбрать конкретные теги
