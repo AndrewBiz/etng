@@ -372,6 +372,532 @@ fn ipma_associations(meta: &[u8], item: u32) -> Option<Vec<u16>> {
     Some(result)
 }
 
+use crate::model::{Tag, Value};
+
+fn be16_at(data: &[u8], offset: usize) -> Option<u16> {
+    data.get(offset..offset + 2)
+        .map(|raw| u16::from_be_bytes([raw[0], raw[1]]))
+}
+
+fn be32_at(data: &[u8], offset: usize) -> Option<u32> {
+    data.get(offset..offset + 4)
+        .map(|raw| u32::from_be_bytes([raw[0], raw[1], raw[2], raw[3]]))
+}
+
+fn compatibilities(flags: u32) -> String {
+    let mut names = Vec::new();
+    if flags & 0x4000_0000 != 0 {
+        names.push("Main Still Picture");
+    }
+    if flags & 0x2000_0000 != 0 {
+        names.push("Main 10");
+    }
+    if flags & 0x1000_0000 != 0 {
+        names.push("Main");
+    }
+    if names.is_empty() {
+        flags.to_string()
+    } else {
+        names.join(", ")
+    }
+}
+
+fn primary_properties(iprp: &[u8], primary_id: u32) -> Option<Vec<usize>> {
+    let ipma = find_box(iprp, b"ipma")?;
+    let version = *ipma.first()?;
+    let flags = u32::from_be_bytes([0, ipma[1], ipma[2], ipma[3]]);
+    let count = be32_at(ipma, 4)? as usize;
+    let mut pos = 8usize;
+    for _ in 0..count {
+        let item = if version < 1 {
+            let value = be16_at(ipma, pos)? as u32;
+            pos += 2;
+            value
+        } else {
+            let value = be32_at(ipma, pos)?;
+            pos += 4;
+            value
+        };
+        let associations = *ipma.get(pos)? as usize;
+        pos += 1;
+        let mut indices = Vec::with_capacity(associations);
+        for _ in 0..associations {
+            let value = if flags & 1 != 0 {
+                let value = be16_at(ipma, pos)? as usize;
+                pos += 2;
+                value & 0x7FFF
+            } else {
+                let value = *ipma.get(pos)? as usize;
+                pos += 1;
+                value & 0x7F
+            };
+            indices.push(value);
+        }
+        if item == primary_id {
+            return Some(indices);
+        }
+    }
+    None
+}
+
+/// QuickTime/HEIF metadata that lives in ISO-BMFF boxes of a HEIC container.
+pub fn quicktime_tags(data: &[u8], out: &mut Vec<Tag>) {
+    let top = boxes(data);
+    if let Some(ftyp) = top.iter().find(|b| &b.kind == b"ftyp") {
+        let payload = ftyp.payload;
+        let major = payload.get(0..4).unwrap_or_default();
+        let label = match major {
+            b"heic" => "High Efficiency Image Format HEVC still image (.HEIC)",
+            b"heix" => "High Efficiency Image Format HEVC image (.HEIX)",
+            b"mif1" => "High Efficiency Image Format still image (.HEIF)",
+            _ => "Unknown",
+        };
+        out.push(Tag::new(
+            "QuickTime",
+            "QuickTime",
+            "MajorBrand",
+            Value::Str(label.to_string()),
+        ));
+        let minor = be32_at(payload, 4).unwrap_or(0);
+        let minor = if minor == 0 {
+            "0.0.0".to_string()
+        } else {
+            format!(
+                "{}.{}.{}",
+                (minor >> 16) & 0xFF,
+                (minor >> 8) & 0xFF,
+                minor & 0xFF
+            )
+        };
+        out.push(Tag::new(
+            "QuickTime",
+            "QuickTime",
+            "MinorVersion",
+            Value::Str(minor),
+        ));
+        let brands: Vec<String> = payload
+            .get(8..)
+            .unwrap_or_default()
+            .chunks_exact(4)
+            .map(|chunk| String::from_utf8_lossy(chunk).trim_end().to_string())
+            .collect();
+        if !brands.is_empty() {
+            out.push(Tag::new(
+                "QuickTime",
+                "QuickTime",
+                "CompatibleBrands",
+                Value::Str(brands.join(", ")),
+            ));
+        }
+    }
+
+    // mdat header/size: recompute from the original buffer.
+    let mut pos = 0usize;
+    while pos + 8 <= data.len() {
+        let size32 = be32_at(data, pos).unwrap_or(0);
+        let kind = data.get(pos + 4..pos + 8).unwrap_or_default();
+        let (header, size) = if size32 == 1 {
+            (
+                16usize,
+                data.get(pos + 8..pos + 16)
+                    .map(|raw| {
+                        u64::from_be_bytes([
+                            raw[0], raw[1], raw[2], raw[3], raw[4], raw[5], raw[6], raw[7],
+                        ])
+                    })
+                    .unwrap_or(0) as usize,
+            )
+        } else if size32 == 0 {
+            (8usize, data.len().saturating_sub(pos))
+        } else {
+            (8usize, size32 as usize)
+        };
+        if kind == b"mdat" && size >= header {
+            out.push(Tag::new(
+                "QuickTime",
+                "QuickTime",
+                "MediaDataSize",
+                Value::Int((size - header) as i64),
+            ));
+            out.push(Tag::new(
+                "QuickTime",
+                "QuickTime",
+                "MediaDataOffset",
+                Value::Int((pos + header) as i64),
+            ));
+        }
+        if size < header {
+            break;
+        }
+        pos += size;
+    }
+
+    let Some(meta) = top.iter().find(|b| &b.kind == b"meta") else {
+        return;
+    };
+    let meta = meta.payload.get(4..).unwrap_or_default();
+
+    if let Some(hdlr) = find_box(meta, b"hdlr")
+        && let Some(kind) = hdlr.get(8..12)
+    {
+        let label = match kind {
+            b"pict" => "Picture",
+            b"vide" => "Video Track",
+            _ => "Unknown",
+        };
+        out.push(Tag::new(
+            "QuickTime",
+            "QuickTime",
+            "HandlerType",
+            Value::Str(label.to_string()),
+        ));
+    }
+
+    let mut primary_id = None;
+    if let Some(pitm) = find_box(meta, b"pitm") {
+        let version = pitm.first().copied().unwrap_or(0);
+        let id = if version == 0 {
+            be16_at(pitm, 4).map(u32::from)
+        } else {
+            be32_at(pitm, 4)
+        };
+        if let Some(id) = id {
+            primary_id = Some(id);
+            out.push(Tag::new(
+                "Meta",
+                "Meta",
+                "PrimaryItemReference",
+                Value::Int(id as i64),
+            ));
+        }
+    }
+
+    let Some(iprp) = find_box(meta, b"iprp") else {
+        return;
+    };
+    let Some(ipco) = find_box(iprp, b"ipco") else {
+        return;
+    };
+    let properties = boxes(ipco);
+    let selected = primary_id
+        .and_then(|id| primary_properties(iprp, id))
+        .unwrap_or_default();
+    let first = |kind: &[u8; 4]| {
+        properties
+            .iter()
+            .enumerate()
+            .find(|(index, b)| {
+                &b.kind == kind && (selected.is_empty() || selected.contains(&(index + 1)))
+            })
+            .or_else(|| properties.iter().enumerate().find(|(_, b)| &b.kind == kind))
+            .map(|(_, b)| b.payload)
+    };
+
+    if let Some(clli) = first(b"clli") {
+        if let Some(max_content) = be16_at(clli, 0) {
+            out.push(Tag::new(
+                "QuickTime",
+                "QuickTime",
+                "MaxContentLightLevel",
+                Value::Int(max_content as i64),
+            ));
+        }
+        if let Some(max_pic) = be16_at(clli, 2) {
+            out.push(Tag::new(
+                "QuickTime",
+                "QuickTime",
+                "MaxPicAverageLightLevel",
+                Value::Int(max_pic as i64),
+            ));
+        }
+    }
+    if let Some(ispe) = first(b"ispe")
+        && let (Some(width), Some(height)) = (be32_at(ispe, 4), be32_at(ispe, 8))
+    {
+        out.push(Tag::new(
+            "QuickTime",
+            "QuickTime",
+            "ImageSpatialExtent",
+            Value::Str(format!("{width}x{height}")),
+        ));
+    }
+    if let Some(irot) = first(b"irot") {
+        let angle = irot.first().copied().unwrap_or(0) & 0x03;
+        let label = match angle {
+            0 => "Horizontal (normal)",
+            1 => "Rotate 270 CW",
+            2 => "Rotate 180",
+            _ => "Rotate 90 CW",
+        };
+        out.push(
+            Tag::new(
+                "QuickTime",
+                "QuickTime",
+                "Rotation",
+                Value::Int(angle as i64),
+            )
+            .with_print(label),
+        );
+    }
+    if let Some(pixi) = first(b"pixi") {
+        let count = pixi.get(4).copied().unwrap_or(0) as usize;
+        let depths: Vec<String> = pixi
+            .get(5..)
+            .unwrap_or_default()
+            .iter()
+            .take(count)
+            .map(u8::to_string)
+            .collect();
+        if !depths.is_empty() {
+            out.push(Tag::new(
+                "QuickTime",
+                "QuickTime",
+                "ImagePixelDepth",
+                Value::Str(depths.join(" ")),
+            ));
+        }
+    }
+    if let Some(auxc) = first(b"auxC") {
+        let text = auxc.get(4..).unwrap_or_default();
+        let end = text
+            .iter()
+            .position(|byte| *byte == 0)
+            .unwrap_or(text.len());
+        if end > 0 {
+            out.push(Tag::new(
+                "QuickTime",
+                "QuickTime",
+                "AuxiliaryImageType",
+                Value::Str(String::from_utf8_lossy(&text[..end]).to_string()),
+            ));
+        }
+    }
+    for colr in properties.iter().filter(|b| &b.kind == b"colr") {
+        if colr.payload.get(0..4) != Some(b"nclx") {
+            continue;
+        }
+        let payload = colr.payload;
+        let primaries = be16_at(payload, 4).unwrap_or(2);
+        let transfer = be16_at(payload, 6).unwrap_or(2);
+        let matrix = be16_at(payload, 8).unwrap_or(2);
+        let full_range = payload.get(10).copied().unwrap_or(0) & 0x80 != 0;
+        out.push(Tag::new(
+            "QuickTime",
+            "QuickTime",
+            "ColorProfiles",
+            Value::Str("nclx".to_string()),
+        ));
+        for (name, value) in [
+            ("ColorPrimaries", primaries),
+            ("TransferCharacteristics", transfer),
+            ("MatrixCoefficients", matrix),
+        ] {
+            let label = match value {
+                1 => "BT.709",
+                2 => "Unspecified",
+                5 => "BT.470 System B/G",
+                6 => "BT.601",
+                9 => "BT.2020",
+                _ => "Unknown",
+            };
+            out.push(
+                Tag::new("QuickTime", "QuickTime", name, Value::Int(value as i64))
+                    .with_print(label),
+            );
+        }
+        out.push(
+            Tag::new(
+                "QuickTime",
+                "QuickTime",
+                "VideoFullRangeFlag",
+                Value::Int(full_range as i64),
+            )
+            .with_print(if full_range { "Full" } else { "Limited" }),
+        );
+        break;
+    }
+    if let Some(hvcc) = first(b"hvcC") {
+        hevc_config(hvcc, out);
+    }
+}
+
+fn hevc_config(payload: &[u8], out: &mut Vec<Tag>) {
+    let Some(version) = payload.first().copied() else {
+        return;
+    };
+    out.push(Tag::new(
+        "QuickTime",
+        "QuickTime",
+        "HEVCConfigurationVersion",
+        Value::Int(version as i64),
+    ));
+    let Some(profile_byte) = payload.get(1).copied() else {
+        return;
+    };
+    let space = (profile_byte >> 6) & 0x03;
+    let tier = (profile_byte >> 5) & 0x01;
+    let profile = profile_byte & 0x1F;
+    out.push(
+        Tag::new(
+            "QuickTime",
+            "QuickTime",
+            "GeneralProfileSpace",
+            Value::Int(space as i64),
+        )
+        .with_print(match space {
+            0 => "Conforming",
+            1 => "Reserved",
+            2 => "Reserved",
+            _ => "Reserved",
+        }),
+    );
+    out.push(
+        Tag::new(
+            "QuickTime",
+            "QuickTime",
+            "GeneralTierFlag",
+            Value::Int(tier as i64),
+        )
+        .with_print(if tier == 0 { "Main Tier" } else { "High Tier" }),
+    );
+    out.push(
+        Tag::new(
+            "QuickTime",
+            "QuickTime",
+            "GeneralProfileIDC",
+            Value::Int(profile as i64),
+        )
+        .with_print(match profile {
+            1 => "Main",
+            2 => "Main 10",
+            3 => "Main Still Picture",
+            4 => "Format Range Extensions",
+            _ => "Unknown",
+        }),
+    );
+    if let Some(flags) = be32_at(payload, 2) {
+        out.push(
+            Tag::new(
+                "QuickTime",
+                "QuickTime",
+                "GenProfileCompatibilityFlags",
+                Value::Int(flags as i64),
+            )
+            .with_print(compatibilities(flags)),
+        );
+    }
+    if let Some(raw) = payload.get(6..12) {
+        out.push(Tag::new(
+            "QuickTime",
+            "QuickTime",
+            "ConstraintIndicatorFlags",
+            Value::Str(raw.iter().map(u8::to_string).collect::<Vec<_>>().join(" ")),
+        ));
+    }
+    if let Some(level) = payload.get(12).copied() {
+        out.push(
+            Tag::new(
+                "QuickTime",
+                "QuickTime",
+                "GeneralLevelIDC",
+                Value::Int(level as i64),
+            )
+            .with_print(format!("{level} (level {:.1})", level as f64 / 30.0)),
+        );
+    }
+    if let Some(min_spatial) = be16_at(payload, 13) {
+        out.push(Tag::new(
+            "QuickTime",
+            "QuickTime",
+            "MinSpatialSegmentationIDC",
+            Value::Int((min_spatial & 0x0FFF) as i64),
+        ));
+    }
+    if let Some(parallelism) = payload.get(15).copied() {
+        out.push(Tag::new(
+            "QuickTime",
+            "QuickTime",
+            "ParallelismType",
+            Value::Int((parallelism & 0x03) as i64),
+        ));
+    }
+    if let Some(chroma) = payload.get(16).copied() {
+        let chroma = chroma & 0x03;
+        out.push(
+            Tag::new(
+                "QuickTime",
+                "QuickTime",
+                "ChromaFormat",
+                Value::Int(chroma as i64),
+            )
+            .with_print(match chroma {
+                0 => "Monochrome",
+                1 => "4:2:0",
+                2 => "4:2:2",
+                _ => "4:4:4",
+            }),
+        );
+    }
+    if let Some(luma) = payload.get(17).copied() {
+        out.push(Tag::new(
+            "QuickTime",
+            "QuickTime",
+            "BitDepthLuma",
+            Value::Int(((luma & 0x07) + 8) as i64),
+        ));
+    }
+    if let Some(chroma) = payload.get(18).copied() {
+        out.push(Tag::new(
+            "QuickTime",
+            "QuickTime",
+            "BitDepthChroma",
+            Value::Int(((chroma & 0x07) + 8) as i64),
+        ));
+    }
+    if let Some(rate) = be16_at(payload, 19) {
+        out.push(Tag::new(
+            "QuickTime",
+            "QuickTime",
+            "AverageFrameRate",
+            Value::Int(rate as i64),
+        ));
+    }
+    if let Some(flags) = payload.get(21).copied() {
+        let constant = (flags >> 6) & 0x03;
+        let layers = (flags >> 3) & 0x07;
+        let nested = (flags >> 2) & 0x01;
+        out.push(
+            Tag::new(
+                "QuickTime",
+                "QuickTime",
+                "ConstantFrameRate",
+                Value::Int(constant as i64),
+            )
+            .with_print(match constant {
+                0 => "Unknown",
+                1 => "Constant",
+                2 => "Variable",
+                _ => "Unknown",
+            }),
+        );
+        out.push(Tag::new(
+            "QuickTime",
+            "QuickTime",
+            "NumTemporalLayers",
+            Value::Int(layers as i64),
+        ));
+        out.push(
+            Tag::new(
+                "QuickTime",
+                "QuickTime",
+                "TemporalIDNested",
+                Value::Int(nested as i64),
+            )
+            .with_print(if nested == 0 { "No" } else { "Yes" }),
+        );
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

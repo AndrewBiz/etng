@@ -664,3 +664,32 @@ fn cr3_native_canon_subtables_and_conversions() {
         "CanonCR3_001/00.10.00/00.00.00"
     );
 }
+
+#[test]
+fn heic_quicktime_metadata_is_native() {
+    let output = Command::new(bin())
+        .args([
+            "-j",
+            "--fallback=never",
+            "-QuickTime:MajorBrand",
+            "-QuickTime:ImageSpatialExtent",
+            "-QuickTime:HEVCConfigurationVersion",
+            "-QuickTime:BitDepthLuma",
+            corpus("real/exif.heic").to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(
+        json[0]["MajorBrand"],
+        "High Efficiency Image Format HEVC still image (.HEIC)"
+    );
+    assert_eq!(json[0]["ImageSpatialExtent"], "4032x3024");
+    assert_eq!(json[0]["HEVCConfigurationVersion"], 1);
+    assert_eq!(json[0]["BitDepthLuma"], 8);
+}

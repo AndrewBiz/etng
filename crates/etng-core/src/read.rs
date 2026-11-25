@@ -313,6 +313,7 @@ fn parse_heic(data: &[u8], opts: &ReadOptions) -> ParseResult {
     for packet in heic::extract_xmps(data) {
         xmp::parse(packet, &mut tags, &mut warnings);
     }
+    heic::quicktime_tags(data, &mut tags);
     let width = find_int(&tags, "PixelXDimension")
         .or_else(|| dimensions.map(|(w, _)| w))
         .or_else(|| find_int(&tags, "ImageWidth"));

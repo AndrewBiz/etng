@@ -8,7 +8,7 @@ listed here. Entries are deliberate scope decisions, not silent bugs.
 | group | status | reason |
 | --- | --- | --- |
 | `Apple:` | partial | Flat IFD subset only. Complex plist payloads (`AEMatrix`, `RunTime*`, `AccelerationVector`) and exiftool's derived Apple sub-tags are skipped. |
-| `QuickTime:` | partial | CR3 movie header, tracks and `PreviewImage` are read natively; other QuickTime containers and auxiliary images remain out of scope. |
+| `QuickTime:` | partial | CR3 movie header/tracks and HEIC ftyp/hvcC/ipco properties are read natively; other QuickTime containers and auxiliary images remain out of scope. |
 | `ICC_Profile:`, `ICC-header:`, `ICC-meas:`, `ICC-view:` | absent | ICC profile parsing is a separate subsystem. |
 | `Meta:` | absent | HEIF meta-box internals (`MetaImageSize`, `PrimaryItemReference`). |
 | `IFD1:` | partial | Thumbnail IFD tags are emitted, including real `ThumbnailImage` bytes (JPEG/TIFF/HEIC); only `ThumbnailOffset` differs because exiftool reports an adjusted base offset. |
@@ -81,6 +81,9 @@ tag parity.
   some Composite derivations are still approximate, so `auto` mode keeps the
   exiftool delegate for full JSON/CSV parity. `--fallback=never` exposes the
   native subset; `-b` never delegates.
+- **HEIC QuickTime**: `CompatibleBrands` is a string, not a JSON array;
+  `Meta:MetaImageSize` is not decoded. Other HEIC QuickTime fields (hvcC, colr,
+  ispe, irot, pixi, auxC, mdat) are native.
 - **XMP multi-values** are joined with `, ` and represented as strings, except
   booleans (`True`/`False` → JSON `true`/`false`) and numeric/rational strings
   which become JSON numbers.
