@@ -6,6 +6,8 @@ ExifTool нового поколения: быстрый read-only CLI на Rust
 
 **Статус:** alpha (0.1.0). Ядро чтения стабильно, покрытие форматов расширяется.
 
+GitHub: https://github.com/AndrewBiz/etng · GitVerse: https://gitverse.ru/kazimir_bizik/etng
+
 ## Зачем
 
 - **Скорость.** Одиночный JPEG — ~8 мс против ~100 мс у exiftool; 10 000 JPEG —
@@ -34,7 +36,7 @@ ExifTool нового поколения: быстрый read-only CLI на Rust
 ## Установка
 
 ```bash
-git clone <repo-url> etng && cd etng
+git clone https://github.com/AndrewBiz/etng.git etng && cd etng
 cargo build --release
 install -m755 target/release/etng ~/.local/bin/etng
 ```
