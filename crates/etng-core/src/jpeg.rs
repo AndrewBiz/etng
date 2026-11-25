@@ -182,3 +182,149 @@ mod tests {
         }
     }
 }
+
+/// Extract MPF (Multi-Picture Format) secondary images from APP2 segments.
+/// Returns `(group, jpeg_bytes)` for every image after the primary one.
+pub fn mpf_previews(data: &[u8]) -> Vec<(&'static str, &[u8])> {
+    const GROUPS: [&str; 4] = ["MPImage1", "MPImage2", "MPImage3", "MPImage4"];
+    let mut out = Vec::new();
+    let mut pos = 2usize;
+    while pos + 4 <= data.len() {
+        if data[pos] != 0xFF {
+            break;
+        }
+        let marker = data[pos + 1];
+        if marker == 0xD8 || marker == 0x01 || (0xD0..=0xD7).contains(&marker) {
+            pos += 2;
+            continue;
+        }
+        let length = u16::from_be_bytes([data[pos + 2], data[pos + 3]]) as usize;
+        if length < 2 || pos + 2 + length > data.len() {
+            break;
+        }
+        let segment = &data[pos + 4..pos + 2 + length];
+        if marker == 0xE2 && segment.starts_with(b"MPF\0") {
+            let tiff_start = pos + 8;
+            let tiff = &data[tiff_start..pos + 2 + length];
+            parse_mpf(tiff, tiff_start, data, &GROUPS, &mut out);
+            break;
+        }
+        pos += 2 + length;
+    }
+    out
+}
+
+fn parse_mpf<'a>(
+    tiff: &[u8],
+    tiff_start: usize,
+    data: &'a [u8],
+    groups: &[&'static str; 4],
+    out: &mut Vec<(&'static str, &'a [u8])>,
+) {
+    let le = tiff.starts_with(b"II");
+    let read16 = |offset: usize| -> Option<u16> {
+        let raw = tiff.get(offset..offset + 2)?;
+        Some(if le {
+            u16::from_le_bytes([raw[0], raw[1]])
+        } else {
+            u16::from_be_bytes([raw[0], raw[1]])
+        })
+    };
+    let read32 = |offset: usize| -> Option<u32> {
+        let raw = tiff.get(offset..offset + 4)?;
+        Some(if le {
+            u32::from_le_bytes([raw[0], raw[1], raw[2], raw[3]])
+        } else {
+            u32::from_be_bytes([raw[0], raw[1], raw[2], raw[3]])
+        })
+    };
+    let Some(ifd) = read32(4).map(|offset| offset as usize) else {
+        return;
+    };
+    let Some(count) = read16(ifd) else {
+        return;
+    };
+    let mut images = 0usize;
+    let mut entries_offset = None;
+    for index in 0..count as usize {
+        let entry = ifd + 2 + index * 12;
+        let (Some(tag), Some(kind), Some(value)) =
+            (read16(entry), read16(entry + 2), read32(entry + 8))
+        else {
+            return;
+        };
+        match tag {
+            0xB001 if kind == 4 => images = value as usize,
+            0xB002 => entries_offset = Some(value as usize),
+            _ => {}
+        }
+    }
+    let Some(entries_offset) = entries_offset else {
+        return;
+    };
+    for (index, group) in groups
+        .iter()
+        .enumerate()
+        .take(images.min(groups.len()))
+        .skip(1)
+    {
+        let entry = entries_offset + index * 16;
+        let (Some(size), Some(offset)) = (read32(entry + 4), read32(entry + 8)) else {
+            break;
+        };
+        let start = tiff_start + offset as usize;
+        let Some(bytes) = data.get(start..start + size as usize) else {
+            continue;
+        };
+        if bytes.starts_with(&[0xFF, 0xD8]) {
+            out.push((group, bytes));
+        }
+    }
+}
+
+#[cfg(test)]
+mod mpf_tests {
+    use super::*;
+
+    fn synthetic() -> Vec<u8> {
+        let mut tiff = Vec::new();
+        tiff.extend_from_slice(b"II*\0");
+        tiff.extend_from_slice(&8u32.to_le_bytes());
+        tiff.extend_from_slice(&2u16.to_le_bytes());
+        tiff.extend_from_slice(&0xB001u16.to_le_bytes());
+        tiff.extend_from_slice(&4u16.to_le_bytes());
+        tiff.extend_from_slice(&1u32.to_le_bytes());
+        tiff.extend_from_slice(&2u32.to_le_bytes());
+        tiff.extend_from_slice(&0xB002u16.to_le_bytes());
+        tiff.extend_from_slice(&7u16.to_le_bytes());
+        tiff.extend_from_slice(&32u32.to_le_bytes());
+        tiff.extend_from_slice(&38u32.to_le_bytes());
+        tiff.extend_from_slice(&0u32.to_le_bytes());
+        tiff.extend_from_slice(&0x8003_0000u32.to_le_bytes());
+        tiff.extend_from_slice(&2u32.to_le_bytes());
+        tiff.extend_from_slice(&0u32.to_le_bytes());
+        tiff.extend_from_slice(&0u32.to_le_bytes());
+        tiff.extend_from_slice(&0x4001_0002u32.to_le_bytes());
+        tiff.extend_from_slice(&4u32.to_le_bytes());
+        tiff.extend_from_slice(&70u32.to_le_bytes());
+        tiff.extend_from_slice(&0u32.to_le_bytes());
+        tiff.extend_from_slice(&[0xFF, 0xD8, 0xFF, 0xD9]);
+
+        let mut jpeg = vec![0xFF, 0xD8];
+        let length = (2 + 4 + tiff.len()) as u16;
+        jpeg.extend_from_slice(&[0xFF, 0xE2]);
+        jpeg.extend_from_slice(&length.to_be_bytes());
+        jpeg.extend_from_slice(b"MPF\0");
+        jpeg.extend_from_slice(&tiff);
+        jpeg
+    }
+
+    #[test]
+    fn extracts_secondary_image() {
+        let jpeg = synthetic();
+        let previews = mpf_previews(&jpeg);
+        assert_eq!(previews.len(), 1);
+        assert_eq!(previews[0].0, "MPImage2");
+        assert_eq!(previews[0].1, &[0xFF, 0xD8, 0xFF, 0xD9]);
+    }
+}

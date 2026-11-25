@@ -224,6 +224,14 @@ fn parse_jpeg(data: &[u8], opts: &ReadOptions) -> ParseResult {
             "ThumbnailImage",
         );
     }
+    for (group, bytes) in jpeg::mpf_previews(data) {
+        tags.push(Tag::new(
+            group,
+            group,
+            "PreviewImage",
+            Value::Bytes(bytes.to_vec()),
+        ));
+    }
     if let Some(photoshop) = info.photoshop {
         if let Some(iim) = iptc::extract_iim(photoshop) {
             use md5::{Digest, Md5};

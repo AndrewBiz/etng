@@ -886,10 +886,7 @@ pub(crate) fn canon_fixups(tags: &mut Vec<Tag>, numeric: bool) {
 }
 
 fn thumbnail(payload: &[u8], tags: &mut Vec<Tag>) {
-    let Some(length) = at32(payload, 8) else {
-        return;
-    };
-    let Some(bytes) = payload.get(16..16 + length as usize) else {
+    let Some(bytes) = payload.get(16..) else {
         return;
     };
     if !bytes.starts_with(&[0xFF, 0xD8]) {
