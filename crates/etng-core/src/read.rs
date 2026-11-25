@@ -435,7 +435,7 @@ fn find_u32_in(tags: &[Tag], group1: &str, name: &str) -> Option<u32> {
         .and_then(|value| u32::try_from(value).ok())
 }
 
-fn push_byte_order(tags: &mut Vec<Tag>, little_endian: bool) {
+pub(crate) fn push_byte_order(tags: &mut Vec<Tag>, little_endian: bool) {
     tags.push(
         Tag::new(
             "File",
@@ -544,6 +544,11 @@ pub(crate) fn push_post_composites(tags: &mut Vec<Tag>) {
         ));
     }
     if let Some(lens) = find_str(tags, "LensModel") {
+        let lens = if lens.starts_with("Canon ") {
+            lens
+        } else {
+            format!("Canon {lens}")
+        };
         tags.push(Tag::new(
             "Composite",
             "Composite",
@@ -590,13 +595,15 @@ pub(crate) fn push_post_composites(tags: &mut Vec<Tag>) {
 
 fn find_f64(tags: &[Tag], name: &str) -> Option<f64> {
     tags.iter()
-        .find(|tag| tag.name == name)
+        .find(|tag| tag.group1 == "ExifIFD" && tag.name == name)
+        .or_else(|| tags.iter().find(|tag| tag.name == name))
         .and_then(|tag| tag.value.as_f64())
 }
 
 fn find_str(tags: &[Tag], name: &str) -> Option<String> {
     tags.iter()
-        .find(|tag| tag.name == name)
+        .find(|tag| tag.group1 == "ExifIFD" && tag.name == name)
+        .or_else(|| tags.iter().find(|tag| tag.name == name))
         .and_then(|tag| match &tag.value {
             Value::Str(text) => Some(text.clone()),
             _ => None,

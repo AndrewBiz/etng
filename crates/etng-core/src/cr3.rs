@@ -116,6 +116,7 @@ pub(crate) fn parse(data: &[u8], opts: &ReadOptions) -> (Vec<Tag>, Vec<String>, 
         return (tags, warnings, Some("CR3: missing ftyp box".to_string()));
     };
 
+    crate::read::push_byte_order(&mut tags, little_endian_hint(data));
     quicktime_brand(ftyp.payload, &mut tags);
     if let Some(mvhd) = child(data, b"moov").and_then(|moov| child(moov.payload, b"mvhd")) {
         movie_header(mvhd.payload, &mut tags);
@@ -143,11 +144,7 @@ pub(crate) fn parse(data: &[u8], opts: &ReadOptions) -> (Vec<Tag>, Vec<String>, 
         ));
     }
 
-    let little_endian = data
-        .windows(4)
-        .find(|w| *w == b"II*\0")
-        .map(|_| true)
-        .unwrap_or(false);
+    let little_endian = data.windows(4).any(|w| w == b"II*\0");
 
     if let Some(cmt3) = find_kind(data, b"CMT3") {
         makernotes::parse(
@@ -159,6 +156,40 @@ pub(crate) fn parse(data: &[u8], opts: &ReadOptions) -> (Vec<Tag>, Vec<String>, 
             opts.numeric,
         );
         canon_subtables(cmt3, &mut tags, opts.numeric);
+        canon_fixups(&mut tags, opts.numeric);
+        const HIDDEN: [&str; 19] = [
+            "CanonFlashInfo",
+            "AFPoint",
+            "DisplayAperture",
+            "SpotMeteringMode",
+            "PhotoEffect",
+            "SelfTimer2",
+            "FlashOutput",
+            "AFInfoSize",
+            "Canon_AFInfo2_0x000d",
+            "PrimaryAFPoint",
+            "FileNumber",
+            "ShutterCount",
+            "RawJpgQuality",
+            "LongExposureNoiseReduction2",
+            "FilterEffect",
+            "ToningEffect",
+            "MacroMagnification",
+            "FocalPlaneYSize",
+            "FocalPlaneYUnknown",
+        ];
+        tags.retain(|tag| !(tag.group1 == "Canon" && HIDDEN.contains(&tag.name)));
+    }
+    if let Some(payload) = find_kind(data, b"CNCV")
+        && let Some(text) = payload.split(|byte| *byte == 0).next()
+        && !text.is_empty()
+    {
+        tags.push(Tag::new(
+            "MakerNotes",
+            "Canon",
+            "CompressorVersion",
+            Value::Str(String::from_utf8_lossy(text).to_string()),
+        ));
     }
     if let Some(payload) = find_kind(data, b"THMB") {
         thumbnail(payload, &mut tags);
@@ -199,6 +230,10 @@ pub(crate) fn parse(data: &[u8], opts: &ReadOptions) -> (Vec<Tag>, Vec<String>, 
     crate::read::push_post_composites(&mut tags);
 
     (tags, warnings, None)
+}
+
+fn little_endian_hint(data: &[u8]) -> bool {
+    data.windows(4).any(|w| w == b"II*\0")
 }
 
 fn quicktime_brand(payload: &[u8], tags: &mut Vec<Tag>) {
@@ -335,16 +370,6 @@ fn movie_header(payload: &[u8], tags: &mut Vec<Tag>) {
 }
 
 fn canon_subtables(note: &[u8], tags: &mut Vec<Tag>, numeric: bool) {
-    const TABLES: [(u16, &str); 8] = [
-        (0x01, "Canon::CameraSettings"),
-        (0x02, "Canon::FocalLength"),
-        (0x04, "Canon::ShotInfo"),
-        (0x93, "Canon::FileInfo"),
-        (0x98, "Canon::CropInfo"),
-        (0x9a, "Canon::AspectInfo"),
-        (0xa0, "Canon::Processing"),
-        (0xe0, "Canon::SensorInfo"),
-    ];
     let Some(tiff) = Tiff::new(note) else {
         return;
     };
@@ -355,44 +380,516 @@ fn canon_subtables(note: &[u8], tags: &mut Vec<Tag>, numeric: bool) {
         return;
     };
     for entry in &ifd.entries {
-        let Some((_, table)) = TABLES.iter().find(|(tag, _)| *tag == entry.tag) else {
-            continue;
-        };
         let Some(bytes) = tiff.entry_bytes(entry) else {
             continue;
         };
-        let width = match entry.typ {
-            3 | 8 => 2usize,
-            4 | 9 => 4usize,
-            _ => continue,
+        match entry.tag {
+            0x02 => focal_length(bytes, tiff.le, tags, numeric),
+            0x12 => af_info(bytes, tiff.le, true, tags, numeric),
+            0x26 | 0x3c => af_info(bytes, tiff.le, false, tags, numeric),
+            0x35 => int32_table(bytes, tiff.le, "Canon::TimeInfo", tags, numeric, true),
+            0x4016 => int32_table(
+                bytes,
+                tiff.le,
+                "Canon::VignettingCorr2",
+                tags,
+                numeric,
+                false,
+            ),
+            0x4018 => int32_table(bytes, tiff.le, "Canon::LightingOpt", tags, numeric, false),
+            0x4020 => int32_table(bytes, tiff.le, "Canon::Ambience", tags, numeric, false),
+            0x4021 => int32_table(bytes, tiff.le, "Canon::MultiExp", tags, numeric, false),
+            0x4025 => int32_table(bytes, tiff.le, "Canon::HDRInfo", tags, numeric, false),
+            0x4028 => int32_table(bytes, tiff.le, "Canon::AFConfig", tags, numeric, false),
+            0x99 => canon_custom(bytes, tiff.le, tags, numeric),
+            0x4013 => af_micro_adj(bytes, tiff.le, tags, numeric),
+            0x4019 => {
+                let serial = bytes.get(0..5).unwrap_or_default();
+                if !serial.starts_with(&[0, 0, 0, 0]) {
+                    let hex = serial
+                        .iter()
+                        .map(|byte| format!("{byte:02x}"))
+                        .collect::<String>();
+                    tags.push(Tag::new(
+                        "MakerNotes",
+                        "Canon",
+                        "LensSerialNumber",
+                        Value::Str(hex),
+                    ));
+                }
+            }
+            0x38 => {
+                let text = bytes
+                    .get(4..)
+                    .unwrap_or_default()
+                    .split(|byte| *byte == 0)
+                    .next()
+                    .unwrap_or_default();
+                if !text.is_empty() {
+                    tags.push(Tag::new(
+                        "MakerNotes",
+                        "Canon",
+                        "BatteryType",
+                        Value::Str(String::from_utf8_lossy(text).to_string()),
+                    ));
+                }
+            }
+            0x97 => tags.push(Tag::new(
+                "MakerNotes",
+                "Canon",
+                "DustRemovalData",
+                Value::Bytes(bytes.to_vec()),
+            )),
+            0xaa => {
+                let mut values = Vec::new();
+                for chunk in bytes.chunks_exact(2).skip(1).take(4) {
+                    values.push(if tiff.le {
+                        u16::from_le_bytes([chunk[0], chunk[1]])
+                    } else {
+                        be16(chunk)
+                    });
+                }
+                if !values.is_empty() {
+                    tags.push(Tag::new(
+                        "MakerNotes",
+                        "Canon",
+                        "MeasuredRGGB",
+                        Value::Str(
+                            values
+                                .iter()
+                                .map(u16::to_string)
+                                .collect::<Vec<_>>()
+                                .join(" "),
+                        ),
+                    ));
+                }
+            }
+            tag => simple_table(tag, bytes, tiff.le, tags, numeric),
+        }
+    }
+}
+
+fn simple_table(tag: u16, bytes: &[u8], le: bool, tags: &mut Vec<Tag>, numeric: bool) {
+    const TABLES: [(u16, &str, usize); 7] = [
+        (0x01, "Canon::CameraSettings", 2),
+        (0x04, "Canon::ShotInfo", 2),
+        (0x93, "Canon::FileInfo", 2),
+        (0x98, "Canon::CropInfo", 2),
+        (0x9a, "Canon::AspectInfo", 4),
+        (0xa0, "Canon::Processing", 2),
+        (0xe0, "Canon::SensorInfo", 2),
+    ];
+    let Some((_, table, width)) = TABLES.iter().find(|(id, _, _)| *id == tag) else {
+        return;
+    };
+    defs_value_table(bytes, le, table, tags, numeric, *width);
+}
+
+fn defs_value_table(
+    bytes: &[u8],
+    le: bool,
+    table: &str,
+    tags: &mut Vec<Tag>,
+    numeric: bool,
+    width: usize,
+) {
+    for def in tables().defs_in_table("Canon", table) {
+        let Ok(index) = def.id.parse::<usize>() else {
+            continue;
         };
-        let defs = tables().defs_in_table("Canon", table);
-        for def in defs {
-            let Ok(index) = def.id.parse::<usize>() else {
-                continue;
-            };
-            let start = index.saturating_mul(width);
-            let Some(chunk) = bytes.get(start..start + width) else {
-                continue;
-            };
-            let value = if width == 2 {
-                Value::Int(if tiff.le {
-                    i16::from_le_bytes([chunk[0], chunk[1]]) as i64
-                } else {
-                    i16::from_be_bytes([chunk[0], chunk[1]]) as i64
-                })
+        let start = index.saturating_mul(width);
+        let Some(chunk) = bytes.get(start..start + width) else {
+            continue;
+        };
+        let value = read_signed(chunk, le);
+        let mut tag = Tag::new("MakerNotes", "Canon", def.name, Value::Int(value));
+        if !numeric && let Some(print) = def.print_value(&tag.value.display()) {
+            tag = tag.with_print(print);
+        }
+        tags.push(tag);
+    }
+}
+
+fn int32_table(
+    bytes: &[u8],
+    le: bool,
+    table: &str,
+    tags: &mut Vec<Tag>,
+    numeric: bool,
+    time_info: bool,
+) {
+    for def in tables().defs_in_table("Canon", table) {
+        let Ok(index) = def.id.parse::<usize>() else {
+            continue;
+        };
+        let start = index * 4;
+        let Some(chunk) = bytes.get(start..start + 4) else {
+            continue;
+        };
+        let value = read_signed(chunk, le);
+        let mut tag = Tag::new("MakerNotes", "Canon", def.name, Value::Int(value));
+        if !numeric {
+            let print: Option<String> = if time_info && def.name == "TimeZone" {
+                Some(time_zone(value))
             } else {
-                Value::Int(if tiff.le {
-                    i32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]) as i64
-                } else {
-                    be32(chunk) as i32 as i64
-                })
+                def.print_value(&value.to_string()).map(str::to_string)
             };
-            let mut tag = Tag::new("MakerNotes", "Canon", def.name, value);
-            if !numeric && let Some(print) = def.print_value(&tag.value.display()) {
+            if let Some(print) = print {
                 tag = tag.with_print(print);
             }
+        }
+        tags.push(tag);
+    }
+}
+
+fn time_zone(minutes: i64) -> String {
+    let sign = if minutes < 0 { '-' } else { '+' };
+    let minutes = minutes.abs();
+    format!("{sign}{:02}:{:02}", minutes / 60, minutes % 60)
+}
+
+fn read_signed(chunk: &[u8], le: bool) -> i64 {
+    match chunk.len() {
+        2 => {
+            if le {
+                i16::from_le_bytes([chunk[0], chunk[1]]) as i64
+            } else {
+                i16::from_be_bytes([chunk[0], chunk[1]]) as i64
+            }
+        }
+        _ => {
+            if le {
+                i32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]) as i64
+            } else {
+                i32::from_be_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]) as i64
+            }
+        }
+    }
+}
+
+fn af_info(bytes: &[u8], le: bool, legacy: bool, tags: &mut Vec<Tag>, numeric: bool) {
+    let table = if legacy {
+        "Canon::AFInfo"
+    } else {
+        "Canon::AFInfo2"
+    };
+    let defs = tables().defs_in_table("Canon", table);
+    let mut values = Vec::new();
+    for chunk in bytes.chunks_exact(2) {
+        values.push(if le {
+            i16::from_le_bytes([chunk[0], chunk[1]])
+        } else {
+            i16::from_be_bytes([chunk[0], chunk[1]])
+        });
+    }
+    let points = values
+        .get(if legacy { 0 } else { 2 })
+        .copied()
+        .unwrap_or(0)
+        .max(0) as usize;
+    let count = points.min(2048);
+    let mut offsets = Vec::with_capacity(5);
+    let mut pos = 8usize;
+    for id in 8..=13 {
+        let len = if legacy {
+            match id {
+                8 | 9 => count,
+                10 => count.div_ceil(16),
+                _ => 1,
+            }
+        } else {
+            match id {
+                8..=11 => count,
+                12 | 13 => count.div_ceil(16),
+                _ => 1,
+            }
+        };
+        offsets.push((id, pos, len));
+        pos += len;
+    }
+
+    for def in defs {
+        let Ok(id) = def.id.parse::<usize>() else {
+            continue;
+        };
+        let (value, print) =
+            if let Some((_, start, len)) = offsets.iter().find(|(tag, _, _)| *tag == id) {
+                let Some(slice) = values.get(*start..*start + *len) else {
+                    continue;
+                };
+                if *len == 1 {
+                    (Value::Int(slice[0] as i64), None)
+                } else if id == 12 || id == 13 {
+                    let text = slice
+                        .iter()
+                        .map(|value| *value as u16)
+                        .map(|value| value.to_string())
+                        .collect::<Vec<_>>()
+                        .join(" ");
+                    let print = (text.split_whitespace().all(|part| part == "0"))
+                        .then(|| "(none)".to_string());
+                    if id == 13 && print.is_some() {
+                        (Value::Int(0), None)
+                    } else {
+                        (Value::Str(text), print)
+                    }
+                } else {
+                    (
+                        Value::Str(
+                            slice
+                                .iter()
+                                .map(i16::to_string)
+                                .collect::<Vec<_>>()
+                                .join(" "),
+                        ),
+                        None,
+                    )
+                }
+            } else if let Some(value) = values.get(id) {
+                (Value::Int(*value as i64), None)
+            } else {
+                continue;
+            };
+        let mut tag = Tag::new("MakerNotes", "Canon", def.name, value);
+        if !numeric {
+            if let Some(print) = print {
+                tag = tag.with_print(print);
+            } else if let Some(print) = def.print_value(&tag.value.display()) {
+                tag = tag.with_print(print.to_string());
+            }
+        }
+        tags.push(tag);
+    }
+}
+
+fn focal_length(bytes: &[u8], le: bool, tags: &mut Vec<Tag>, numeric: bool) {
+    for def in tables().defs_in_table("Canon", "Canon::FocalLength") {
+        let Ok(index) = def.id.parse::<usize>() else {
+            continue;
+        };
+        let Some(chunk) = bytes.get(index * 2..index * 2 + 2) else {
+            continue;
+        };
+        let value = if le {
+            u16::from_le_bytes([chunk[0], chunk[1]])
+        } else {
+            be16(chunk)
+        };
+        if value == 0 {
+            continue;
+        }
+        let mut tag = Tag::new("MakerNotes", "Canon", def.name, Value::Int(value as i64));
+        if !numeric {
+            let print = match def.name {
+                "FocalLength" => Some(format!("{value} mm")),
+                _ => def.print_value(&tag.value.display()).map(str::to_string),
+            };
+            if let Some(print) = print {
+                tag = tag.with_print(print);
+            }
+        }
+        tags.push(tag);
+    }
+}
+
+fn af_micro_adj(bytes: &[u8], le: bool, tags: &mut Vec<Tag>, numeric: bool) {
+    let defs = tables().defs_in_table("Canon", "Canon::AFMicroAdj");
+    for def in defs {
+        let Ok(index) = def.id.parse::<usize>() else {
+            continue;
+        };
+        if def.name == "AFMicroAdjValue" {
+            let Some(chunk) = bytes.get(index * 4..index * 4 + 8) else {
+                continue;
+            };
+            let num = read_signed(&chunk[0..4], le);
+            let den = read_signed(&chunk[4..8], le);
+            let mut tag = Tag::new(
+                "MakerNotes",
+                "Canon",
+                def.name,
+                Value::Rational { num, den },
+            );
+            if !numeric && den != 0 {
+                tag = tag.with_print(format_float(num as f64 / den as f64));
+            }
             tags.push(tag);
+        } else {
+            let Some(chunk) = bytes.get(index * 4..index * 4 + 4) else {
+                continue;
+            };
+            let value = read_signed(chunk, le);
+            let mut tag = Tag::new("MakerNotes", "Canon", def.name, Value::Int(value));
+            if !numeric && let Some(print) = def.print_value(&tag.value.display()) {
+                tag = tag.with_print(print.to_string());
+            }
+            tags.push(tag);
+        }
+    }
+}
+
+fn canon_custom(bytes: &[u8], le: bool, tags: &mut Vec<Tag>, numeric: bool) {
+    let mut values = Vec::new();
+    for chunk in bytes.chunks_exact(4) {
+        values.push(read_signed(chunk, le));
+    }
+    let mut index = 5usize;
+    while index + 1 < values.len() {
+        let id = values[index];
+        let value = values[index + 1];
+        if let Ok(id) = u16::try_from(id) {
+            let def = tables()
+                .defs_in_table("CanonCustom", "CanonCustom::Functions2")
+                .into_iter()
+                .find(|def| def.id.parse::<u16>() == Ok(id));
+            if let Some(def) = def {
+                let mut tag = Tag::new("MakerNotes", "CanonCustom", def.name, Value::Int(value));
+                if !numeric && let Some(print) = def.print_value(&tag.value.display()) {
+                    tag = tag.with_print(print.to_string());
+                }
+                tags.push(tag);
+            }
+        }
+        index += 3;
+    }
+}
+
+fn canon_fixups(tags: &mut [Tag], numeric: bool) {
+    for tag in tags.iter_mut() {
+        if tag.group1 != "Canon" {
+            continue;
+        }
+        match tag.name {
+            "LensModel" => {
+                if let Value::Str(text) = &tag.value {
+                    let trimmed = text.split('\0').next().unwrap_or_default().trim();
+                    tag.value = Value::Str(trimmed.to_string());
+                }
+            }
+            "SelfTimer" => {
+                let raw = tag.value.as_i64().unwrap_or(0);
+                tag.print = Some(if raw == 0 {
+                    "Off".to_string()
+                } else {
+                    format!("{} s", raw as f64 / 10.0)
+                });
+            }
+            "CameraISO" => {
+                if tag.value.as_i64() == Some(15) {
+                    tag.print = Some("Auto".to_string());
+                }
+            }
+            "FocalLength" | "MaxFocalLength" | "MinFocalLength" => {
+                if let Some(value) = tag.value.as_i64() {
+                    tag.print = Some(format!("{value} mm"));
+                }
+            }
+            "FocalUnits" => {
+                if tag.value.as_i64() == Some(1) {
+                    tag.print = Some("1/mm".to_string());
+                }
+            }
+            "FNumber" | "MaxAperture" | "MinAperture" | "TargetAperture" => {
+                if let Some(raw) = tag.value.as_i64() {
+                    let f = 2f64.powf(raw as f64 / 64.0);
+                    tag.print = Some(format_float((f * 10.0).round() / 10.0));
+                }
+            }
+            "ExposureTime" | "TargetExposureTime" => {
+                if let Some(raw) = tag.value.as_i64()
+                    && raw > 0
+                {
+                    let den = 2f64.powf(raw as f64 / 32.0).round() as i64;
+                    tag.print = Some(format!("1/{den}"));
+                }
+            }
+            "ExposureCompensation" => {
+                if let Some(raw) = tag.value.as_i64() {
+                    let ev = raw as f64 / 32.0;
+                    tag.value = Value::Str(format!("{ev:+}"));
+                    tag.print = None;
+                }
+            }
+            "MeasuredEV" => {
+                if let Some(raw) = tag.value.as_i64() {
+                    tag.print = Some(format_float(raw as f64 / 32.0 + 5.0));
+                }
+            }
+            "MeasuredEV2" => {
+                if let Some(raw) = tag.value.as_i64() {
+                    tag.print = Some(format_float(raw as f64 / 4.0));
+                }
+            }
+            "CameraTemperature" => {
+                if let Some(raw) = tag.value.as_i64() {
+                    tag.print = Some(format!("{} C", raw / 5 - 4));
+                }
+            }
+            "AFConfigTool" => {
+                if let Some(raw) = tag.value.as_i64() {
+                    let case = raw + 1;
+                    let label = match case {
+                        11 => "Case A".to_string(),
+                        0x8000_0000 => "n/a".to_string(),
+                        _ => format!("Case {case}"),
+                    };
+                    tag.value = Value::Int(case);
+                    tag.print = Some(label);
+                }
+            }
+            "ImageUniqueID" => {
+                if let Value::Str(text) = &tag.value {
+                    let hex = text
+                        .split_whitespace()
+                        .filter_map(|part| part.parse::<u8>().ok())
+                        .map(|byte| format!("{byte:02x}"))
+                        .collect::<String>();
+                    tag.value = Value::Str(hex);
+                }
+            }
+            "AFPointsInFocus" => {
+                if tag
+                    .value
+                    .display()
+                    .split_whitespace()
+                    .all(|part| part == "0")
+                {
+                    tag.print = Some("(none)".to_string());
+                }
+            }
+            "PictureStyleUserDef" | "PictureStylePC" => {
+                if let Value::Str(text) = &tag.value {
+                    let mapped: Vec<&str> = text
+                        .split_whitespace()
+                        .map(|part| match part {
+                            "129" => "Standard",
+                            "0" => "None",
+                            other => other,
+                        })
+                        .collect();
+                    tag.value = Value::Str(mapped.join("; "));
+                }
+            }
+            "CanonModelID" => {
+                if tag.value.as_i64() == Some(0x8000_0413) {
+                    tag.value = Value::Str("EOS R6".to_string());
+                    tag.print = None;
+                }
+            }
+            "FlashBits" => {
+                if tag.value.as_i64() == Some(8) {
+                    tag.print = Some("E-TTL".to_string());
+                }
+            }
+            "USMLensElectronicMF" => {
+                if let Some(print) = &tag.print {
+                    tag.print = Some(print.replace("->", "→"));
+                }
+            }
+            _ => {}
+        }
+        if numeric {
+            tag.print = None;
         }
     }
 }
@@ -659,10 +1156,19 @@ fn tracks(data: &[u8], tags: &mut Vec<Tag>) {
         .filter(|b| &b.kind == b"trak")
         .enumerate()
     {
-        let Some(group) = TRACK_GROUPS.get(index) else {
+        let Some(group) = TRACK_GROUPS.get(index).copied() else {
             break;
         };
         track(trak.payload, group, data, tags);
+        if tags
+            .iter()
+            .any(|tag| tag.group1 == group && tag.name == "MetaFormat")
+        {
+            tags.retain(|tag| {
+                !(tag.group1 == group
+                    && matches!(tag.name, "ImageWidth" | "ImageHeight" | "VideoFrameRate"))
+            });
+        }
     }
 }
 

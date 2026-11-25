@@ -633,3 +633,34 @@ fn cr3_binary_extracts_thumbnail_and_preview() {
     assert_eq!(preview.stdout.len(), 237320);
     assert_eq!(&preview.stdout[..2], &[0xFF, 0xD8]);
 }
+
+#[test]
+fn cr3_native_canon_subtables_and_conversions() {
+    let output = Command::new(bin())
+        .args([
+            "-j",
+            "--fallback=never",
+            "-Canon:AFAreaMode",
+            "-Canon:TimeZone",
+            "-Canon:FNumber",
+            "-Canon:AFConfigTool",
+            "-Canon:CompressorVersion",
+            corpus("real/canon-r6.cr3").to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json[0]["AFAreaMode"], "Flexizone Single");
+    assert_eq!(json[0]["TimeZone"], "-08:00");
+    assert_eq!(json[0]["FNumber"], 2.8);
+    assert_eq!(json[0]["AFConfigTool"], "Case 1");
+    assert_eq!(
+        json[0]["CompressorVersion"],
+        "CanonCR3_001/00.10.00/00.00.00"
+    );
+}

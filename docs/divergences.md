@@ -70,11 +70,13 @@ tag parity.
   names, the second writes rows. Memory stays bounded; `-TAG` uses one pass.
 - **`-x`** filters output only: it removes fields and CSV columns but does not
   skip parsing or composite computation, matching exiftool semantics.
-- **CR3 nested Canon tables**: the native reader covers CMT1–CMT4 main IFDs,
-  `THMB`, `PRVW`, QuickTime and tracks. CameraSettings/ShotInfo/FileInfo and
-  similar binary sub-tables are parsed partially; in `auto` mode JSON (and CSV)
-  is therefore replaced by the exiftool delegate to keep full parity. Use
-  `--fallback=never` to inspect the native subset; `-b` never delegates.
+- **CR3 nested Canon tables**: native parsing now covers CameraSettings, ShotInfo,
+  Processing, SensorInfo, FocalLength, AFMicroAdj, AFInfo/2, AFConfig,
+  LightingOpt, VignettingCorr2, TimeInfo, MultiExp, HDRInfo and Ambience
+  (Canon 185 tags vs 183 in exiftool on `canon-r6.cr3`). CanonCustom values and
+  some Composite derivations are still approximate, so `auto` mode keeps the
+  exiftool delegate for full JSON/CSV parity. `--fallback=never` exposes the
+  native subset; `-b` never delegates.
 - **XMP multi-values** are joined with `, ` and represented as strings, except
   booleans (`True`/`False` → JSON `true`/`false`) and numeric/rational strings
   which become JSON numbers.
