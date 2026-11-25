@@ -76,6 +76,17 @@ fn candidate_layouts(vendor: &str, note: &[u8], file_le: bool) -> Vec<Layout> {
         le: file_le,
     }];
     match vendor {
+        "Canon" => {
+            if let Some(tiff) = Tiff::at(note, 0)
+                && let Some(offset) = tiff.first_ifd_offset()
+            {
+                layouts.push(Layout {
+                    ifd_offset: offset,
+                    base_for_values: 0,
+                    le: tiff.le,
+                });
+            }
+        }
         "Nikon" => {
             if note.starts_with(b"Nikon\0")
                 && let Some(tiff) = Tiff::at(note, 10)

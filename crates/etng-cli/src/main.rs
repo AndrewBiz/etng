@@ -170,16 +170,26 @@ fn process(
             report.source.display()
         );
     }
-    let needs_fallback = (forced || report.error.is_some()) && !opts.binary;
+    // CR3 is read natively (EXIF/GPS/QuickTime/previews), but nested Canon
+    // tables are not complete yet. Enrich with exiftool in auto mode so JSON
+    // keeps full parity; binary mode never delegates.
+    let cr3_enrich =
+        report.system.file_type == "CR3" && opts.fallback == FallbackMode::Auto && !opts.binary;
+    let needs_fallback = (forced || report.error.is_some() || cr3_enrich) && !opts.binary;
     if needs_fallback && opts.fallback != FallbackMode::Never {
         let reason = if forced {
             "forced".to_string()
+        } else if cr3_enrich {
+            "CR3 nested Canon metadata".to_string()
         } else {
             report.error.clone().unwrap_or_default()
         };
         match fallback.delegate(&report.source, opts) {
             Ok(delegate) => {
-                if forced {
+                if forced || cr3_enrich {
+                    // For CR3 JSON the delegate is authoritative until nested
+                    // Canon tables are implemented natively; binary mode never
+                    // reaches this branch and uses the native payloads.
                     report.tags = delegate.tags;
                 } else {
                     fallback::merge(report, delegate.clone());
@@ -190,7 +200,7 @@ fn process(
                     report.system.mime_type = delegate.system.mime_type;
                 }
                 report.error = None;
-                if !opts.quiet && diagnostics {
+                if !opts.quiet && diagnostics && !cr3_enrich {
                     eprintln!(
                         "etng: {}: delegated to exiftool ({reason})",
                         report.source.display()

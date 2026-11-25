@@ -8,7 +8,7 @@ listed here. Entries are deliberate scope decisions, not silent bugs.
 | group | status | reason |
 | --- | --- | --- |
 | `Apple:` | partial | Flat IFD subset only. Complex plist payloads (`AEMatrix`, `RunTime*`, `AccelerationVector`) and exiftool's derived Apple sub-tags are skipped. |
-| `QuickTime:` | absent | ISO-BMFF track/property metadata (brands, HEVC configuration, auxiliary images) is out of scope for the read-only MVP. |
+| `QuickTime:` | partial | CR3 movie header, tracks and `PreviewImage` are read natively; other QuickTime containers and auxiliary images remain out of scope. |
 | `ICC_Profile:`, `ICC-header:`, `ICC-meas:`, `ICC-view:` | absent | ICC profile parsing is a separate subsystem. |
 | `Meta:` | absent | HEIF meta-box internals (`MetaImageSize`, `PrimaryItemReference`). |
 | `IFD1:` | partial | Thumbnail IFD tags are emitted, including real `ThumbnailImage` bytes (JPEG/TIFF/HEIC); only `ThumbnailOffset` differs because exiftool reports an adjusted base offset. |
@@ -70,6 +70,11 @@ tag parity.
   names, the second writes rows. Memory stays bounded; `-TAG` uses one pass.
 - **`-x`** filters output only: it removes fields and CSV columns but does not
   skip parsing or composite computation, matching exiftool semantics.
+- **CR3 nested Canon tables**: the native reader covers CMT1–CMT4 main IFDs,
+  `THMB`, `PRVW`, QuickTime and tracks. CameraSettings/ShotInfo/FileInfo and
+  similar binary sub-tables are parsed partially; in `auto` mode JSON (and CSV)
+  is therefore replaced by the exiftool delegate to keep full parity. Use
+  `--fallback=never` to inspect the native subset; `-b` never delegates.
 - **XMP multi-values** are joined with `, ` and represented as strings, except
   booleans (`True`/`False` → JSON `true`/`false`) and numeric/rational strings
   which become JSON numbers.

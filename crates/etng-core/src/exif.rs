@@ -144,7 +144,7 @@ fn gps_prints(tags: &mut [Tag]) {
     }
 }
 
-fn format_coordinate(decimal: f64, reference: Option<char>) -> Option<String> {
+pub(crate) fn format_coordinate(decimal: f64, reference: Option<char>) -> Option<String> {
     let value = decimal.abs();
     let degrees = value.trunc();
     let minutes_full = (value - degrees) * 60.0;

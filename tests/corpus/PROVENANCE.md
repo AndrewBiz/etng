@@ -26,7 +26,7 @@ From `nom-exif` testdata, https://github.com/mindeng/nom-exif
 | `exif.heic` | `testdata/exif.heic` |
 | `exif.jpg` | `testdata/exif.jpg` |
 | `tif.tif` | `testdata/tif.tif` |
-| `canon-r6.cr3` | `testdata/canon-r6.cr3` (format not supported → fallback test) |
+| `canon-r6.cr3` | `testdata/canon-r6.cr3` (CR3 native reader tests; MIT) |
 | `broken.jpg`, `endless_loop.jpg`, `invalid-gps` | same repository (hostile inputs, skipped in golden diff) |
 
 ## Local-only vendor samples — NOT distributed

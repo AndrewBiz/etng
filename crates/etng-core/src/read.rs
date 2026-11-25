@@ -84,6 +84,7 @@ type ParseResult = (Vec<Tag>, Vec<String>, Option<String>);
 fn parse(data: &[u8], file_type: FileType, opts: &ReadOptions) -> ParseResult {
     match file_type {
         FileType::Jpeg => parse_jpeg(data, opts),
+        FileType::Cr3 => crate::cr3::parse(data, opts),
         FileType::Tiff | FileType::Dng | FileType::Cr2 | FileType::Nef => {
             parse_tiff(data, file_type, opts)
         }
@@ -339,7 +340,7 @@ fn find_int(tags: &[Tag], name: &str) -> Option<u32> {
         .and_then(|value| u32::try_from(value).ok())
 }
 
-fn push_composite(tags: &mut Vec<Tag>, width: Option<u32>, height: Option<u32>) {
+pub(crate) fn push_composite(tags: &mut Vec<Tag>, width: Option<u32>, height: Option<u32>) {
     let (Some(width), Some(height)) = (width, height) else {
         return;
     };
@@ -450,7 +451,7 @@ fn push_byte_order(tags: &mut Vec<Tag>, little_endian: bool) {
     );
 }
 
-fn push_aperture(tags: &mut Vec<Tag>) {
+pub(crate) fn push_aperture(tags: &mut Vec<Tag>) {
     if let Some(fnumber) = find_f64(tags, "FNumber") {
         let rounded = (fnumber * 10.0).round() / 10.0;
         tags.push(Tag::new(
@@ -462,7 +463,7 @@ fn push_aperture(tags: &mut Vec<Tag>) {
     }
 }
 
-fn push_post_composites(tags: &mut Vec<Tag>) {
+pub(crate) fn push_post_composites(tags: &mut Vec<Tag>) {
     if let Some(exposure) = tags
         .iter()
         .find(|tag| tag.name == "ExposureTime")

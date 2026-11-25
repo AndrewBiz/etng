@@ -166,6 +166,13 @@ impl Tables {
         None
     }
 
+    /// Definitions belonging to one ExifTool table, in table order.
+    pub fn defs_in_table(&self, g1: &str, table: &str) -> Vec<&'static TagDef> {
+        self.group(g1)
+            .map(|group| group.defs.iter().filter(|def| def.table == table).collect())
+            .unwrap_or_default()
+    }
+
     /// Distinct tag names known for a family 1 group, in table order.
     pub fn names_in_group(&self, g1: &str) -> Vec<&'static str> {
         let mut out: Vec<&'static str> = Vec::new();

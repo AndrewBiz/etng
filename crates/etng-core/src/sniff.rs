@@ -8,6 +8,7 @@ pub enum FileType {
     Tiff,
     Dng,
     Cr2,
+    Cr3,
     Nef,
     Heic,
     Unknown,
@@ -20,6 +21,7 @@ impl FileType {
             FileType::Tiff => "TIFF",
             FileType::Dng => "DNG",
             FileType::Cr2 => "CR2",
+            FileType::Cr3 => "CR3",
             FileType::Nef => "NEF",
             FileType::Heic => "HEIC",
             FileType::Unknown => "Unknown",
@@ -32,6 +34,7 @@ impl FileType {
             FileType::Tiff => "tif",
             FileType::Dng => "dng",
             FileType::Cr2 => "cr2",
+            FileType::Cr3 => "cr3",
             FileType::Nef => "nef",
             FileType::Heic => "heic",
             FileType::Unknown => "",
@@ -44,6 +47,7 @@ impl FileType {
             FileType::Tiff => "image/tiff",
             FileType::Dng => "image/x-adobe-dng",
             FileType::Cr2 => "image/x-canon-cr2",
+            FileType::Cr3 => "image/x-canon-cr3",
             FileType::Nef => "image/x-nikon-nef",
             FileType::Heic => "image/heic",
             FileType::Unknown => "application/octet-stream",
@@ -73,6 +77,9 @@ pub fn detect_with_hint(data: &[u8], extension: Option<&str>) -> FileType {
         let brand = &data[8..12];
         if HEIC_BRANDS.iter().any(|b| *b == brand) {
             return FileType::Heic;
+        }
+        if brand == b"crx " {
+            return FileType::Cr3;
         }
         return FileType::Unknown;
     }
@@ -126,5 +133,13 @@ mod tests {
         data.extend_from_slice(&0u16.to_le_bytes());
         data.extend_from_slice(&0u32.to_le_bytes());
         assert_eq!(detect(&data), FileType::Tiff);
+    }
+
+    #[test]
+    fn detects_cr3_brand() {
+        let mut data = Vec::new();
+        data.extend_from_slice(&24u32.to_be_bytes());
+        data.extend_from_slice(b"ftypcrx \0\0\0\x01crx isom");
+        assert_eq!(detect(&data), FileType::Cr3);
     }
 }

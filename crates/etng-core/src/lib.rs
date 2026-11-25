@@ -16,6 +16,7 @@
 pub mod base64;
 pub mod compare;
 pub mod compat;
+pub mod cr3;
 pub mod csv;
 pub mod exif;
 pub mod formatting;

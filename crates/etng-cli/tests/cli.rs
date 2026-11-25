@@ -580,3 +580,56 @@ fn unknown_exclude_is_not_a_usage_error() {
     let parsed: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert!(parsed[0].get("Make").is_some());
 }
+
+#[test]
+fn cr3_native_reader_without_fallback_reports_core_tags() {
+    let output = Command::new(bin())
+        .args([
+            "-j",
+            "--fallback=never",
+            "-FileType",
+            "-Make",
+            "-ExifIFD:ExposureTime",
+            "-GPSLatitude",
+            corpus("real/canon-r6.cr3").to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json[0]["FileType"], "CR3");
+    assert_eq!(json[0]["Make"], "Canon");
+    assert_eq!(json[0]["ExposureTime"], "1/100");
+    assert!(json[0].get("Error").is_none());
+}
+
+#[test]
+fn cr3_binary_extracts_thumbnail_and_preview() {
+    let thumb = Command::new(bin())
+        .args([
+            "-b",
+            "-ThumbnailImage",
+            corpus("real/canon-r6.cr3").to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(thumb.status.success());
+    assert_eq!(thumb.stdout.len(), 12840);
+    assert_eq!(&thumb.stdout[..2], &[0xFF, 0xD8]);
+
+    let preview = Command::new(bin())
+        .args([
+            "-b",
+            "-PreviewImage",
+            corpus("real/canon-r6.cr3").to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(preview.status.success());
+    assert_eq!(preview.stdout.len(), 237320);
+    assert_eq!(&preview.stdout[..2], &[0xFF, 0xD8]);
+}

@@ -5,13 +5,15 @@ ExifTool нового поколения: быстрый read-only CLI на Rust
 
 ## Возможности
 
-- JPEG, TIFF, DNG, CR2, NEF, HEIC/HEIF; EXIF, IPTC, XMP, GPS, MakerNotes
+- JPEG, TIFF, DNG, CR2, CR3, NEF, HEIC/HEIF; EXIF, IPTC, XMP, GPS, MakerNotes
   (Canon, Nikon, Sony, плоский Apple IFD), IFD1 thumbnail-теги.
 - JSON-вывод в формате `exiftool -j`: порядок полей, `-G`/`-G1`, `-s`, `-n`,
   печатные конверсии, `ExifToolVersion` = версия совместимости (13.55).
 - Выбор тегов `-TAG` / `-GROUP:TAG`, рекурсия `-r`, фильтр `-ext`,
   параллельная пакетная обработка с детерминированным порядком.
-- `-b`/`--binary`: сырые байты в stdout (миниатюры, превью CR2) и
+- CR3: нативный ISO-BMFF-ридер (EXIF/Canon/GPS, QuickTime/Track, THMB/PRVW);
+  JSON по умолчанию дополняется exiftool до полного набора, `-b` работает без fallback.
+- `-b`/`--binary`: сырые байты в stdout (миниатюры, превью CR2/CR3) и
   `"base64:<data>"` в JSON; скаляры без print-conversion.
 - `-csv`: табличный вывод, `SourceFile` + колонки тегов; union колонок по
   алфавиту без выбора, порядок аргументов при `-TAG`.
