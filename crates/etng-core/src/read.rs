@@ -84,7 +84,9 @@ type ParseResult = (Vec<Tag>, Vec<String>, Option<String>);
 fn parse(data: &[u8], file_type: FileType, opts: &ReadOptions) -> ParseResult {
     match file_type {
         FileType::Jpeg => parse_jpeg(data, opts),
-        FileType::Tiff | FileType::Dng | FileType::Cr2 | FileType::Nef => parse_tiff(data, opts),
+        FileType::Tiff | FileType::Dng | FileType::Cr2 | FileType::Nef => {
+            parse_tiff(data, file_type, opts)
+        }
         FileType::Heic => parse_heic(data, opts),
         FileType::Unknown => (
             Vec::new(),
@@ -240,12 +242,15 @@ fn parse_jpeg(data: &[u8], opts: &ReadOptions) -> ParseResult {
     (tags, warnings, None)
 }
 
-fn parse_tiff(data: &[u8], opts: &ReadOptions) -> ParseResult {
+fn parse_tiff(data: &[u8], file_type: FileType, opts: &ReadOptions) -> ParseResult {
     let mut tags = Vec::new();
     let mut warnings = Vec::new();
     let little_endian = data.starts_with(b"II");
     push_byte_order(&mut tags, little_endian);
     exif::parse(data, little_endian, &mut tags, &mut warnings, opts.numeric);
+    if file_type == FileType::Cr2 {
+        adjust_cr2(&mut tags);
+    }
     let width = find_int(&tags, "ImageWidth");
     let height = find_int(&tags, "ImageHeight");
     push_aperture(&mut tags);
@@ -335,6 +340,37 @@ fn push_composite(tags: &mut Vec<Tag>, width: Option<u32>, height: Option<u32>) 
         "Megapixels",
         Value::Float(rounded),
     ));
+}
+
+/// CR2 reuses TIFF tags 273/279 for the preview image and hides the TIFF
+/// bits-per-sample tag, matching ExifTool's CR2 interpretation.
+fn adjust_cr2(tags: &mut Vec<Tag>) {
+    let mut preview_length: Option<u32> = None;
+    tags.retain(|tag| !(tag.group1 == "IFD0" && tag.name == "BitsPerSample"));
+    for tag in tags.iter_mut() {
+        if tag.group1 != "IFD0" {
+            continue;
+        }
+        match tag.name {
+            "StripOffsets" => tag.name = "PreviewImageStart",
+            "StripByteCounts" => {
+                tag.name = "PreviewImageLength";
+                preview_length = tag
+                    .value
+                    .as_i64()
+                    .and_then(|value| u32::try_from(value).ok());
+            }
+            _ => {}
+        }
+    }
+    if let Some(length) = preview_length {
+        tags.push(Tag::new(
+            "EXIF",
+            "IFD0",
+            "PreviewImage",
+            Value::Bytes(vec![0u8; length as usize]),
+        ));
+    }
 }
 
 fn push_byte_order(tags: &mut Vec<Tag>, little_endian: bool) {

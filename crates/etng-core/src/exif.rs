@@ -20,10 +20,15 @@ pub fn parse(
         .read_from_container(&mut cursor)
     {
         Ok(exif) => exif,
-        Err(err) => {
-            warnings.push(format!("EXIF: {err}"));
-            return;
-        }
+        Err(err) => match err.distill_partial_result(|errors| {
+            warnings.push(format!("EXIF: partial result ({} errors)", errors.len()));
+        }) {
+            Ok(exif) => exif,
+            Err(err) => {
+                warnings.push(format!("EXIF: {err}"));
+                return;
+            }
+        },
     };
 
     let mut make: Option<String> = None;
@@ -33,9 +38,10 @@ pub fn parse(
         let g1 = match field.tag.context() {
             Context::Tiff => {
                 if field.ifd_num == In::THUMBNAIL {
-                    continue;
+                    "IFD1"
+                } else {
+                    "IFD0"
                 }
-                "IFD0"
             }
             Context::Exif => "ExifIFD",
             Context::Gps => "GPS",

@@ -25,7 +25,6 @@ KNOWN_VENDOR_PREFIXES = (
     "ICC-meas:",
     "ICC-view:",
     "Meta:",
-    "IFD1:",
     "Vivo:",
 )
 SKIP_FILES = {"broken.jpg", "endless_loop.jpg", "invalid-gps"}
@@ -44,6 +43,8 @@ KNOWN_KEYS = {
     "Composite:HyperfocalDistance",
     "File:Comment",
     "ExifIFD:MakerNoteUnknownText",
+    "IFD1:ThumbnailImage",
+    "IFD1:ThumbnailOffset",
     "XMP-exif:FlashFired",
     "XMP-exif:FlashFunction",
     "XMP-exif:FlashMode",

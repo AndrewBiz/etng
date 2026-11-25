@@ -11,7 +11,7 @@ listed here. Entries are deliberate scope decisions, not silent bugs.
 | `QuickTime:` | absent | ISO-BMFF track/property metadata (brands, HEVC configuration, auxiliary images) is out of scope for the read-only MVP. |
 | `ICC_Profile:`, `ICC-header:`, `ICC-meas:`, `ICC-view:` | absent | ICC profile parsing is a separate subsystem. |
 | `Meta:` | absent | HEIF meta-box internals (`MetaImageSize`, `PrimaryItemReference`). |
-| `IFD1:` | absent | Thumbnail IFD tags (`ThumbnailOffset`, `ThumbnailLength`, thumbnail dimensions) are not emitted. |
+| `IFD1:` | partial | Thumbnail IFD tags are emitted (compression, resolutions, Make/Model), except the binary `ThumbnailImage` and `ThumbnailOffset` whose offset base differs from exiftool's. |
 | `Vivo:` | absent | Vivo JSON metadata blob is not decoded. |
 
 ## Known missing or changed composite/derived tags
@@ -50,7 +50,9 @@ tag parity.
   Unknown vendors produce a warning and no tags.
 - **DNG/NEF/CR2 detection** uses the file extension to disambiguate TIFF-family
   containers when the signature alone is ambiguous (exiftool does the same for
-  extension-based TIFF variants).
+  extension-based TIFF variants). CR2 preview tags (273/279) are re-interpreted
+  as `PreviewImageStart`/`PreviewImageLength`, matching exiftool; the preview
+  bytes themselves are reported as a binary-data placeholder.
 - **XMP multi-values** are joined with `, ` and represented as strings, except
   booleans (`True`/`False` → JSON `true`/`false`) and numeric/rational strings
   which become JSON numbers.

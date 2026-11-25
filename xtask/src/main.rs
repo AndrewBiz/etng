@@ -279,7 +279,12 @@ fn corpus_files(root: &Path) -> Result<Vec<PathBuf>, Box<dyn Error>> {
                 .file_name()
                 .and_then(|s| s.to_str())
                 .unwrap_or_default();
-            if name.ends_with(".json") || name.starts_with('.') || name.ends_with(".md") {
+            if name.ends_with(".json")
+                || name.starts_with('.')
+                || name.ends_with(".md")
+                || name.ends_with(".py")
+                || name.ends_with(".sh")
+            {
                 continue;
             }
             files.push(path);
@@ -292,7 +297,7 @@ fn corpus_files(root: &Path) -> Result<Vec<PathBuf>, Box<dyn Error>> {
 /// Compare `etng -j -G1` against the committed golden snapshots.
 fn compare() -> Result<(), Box<dyn Error>> {
     const MASK: [&str; 3] = ["FileAccessDate", "FileInodeChangeDate", "Warning"];
-    const KNOWN_PREFIXES: [&str; 9] = [
+    const KNOWN_PREFIXES: [&str; 8] = [
         "Apple:",
         "QuickTime:",
         "ICC_Profile:",
@@ -300,11 +305,10 @@ fn compare() -> Result<(), Box<dyn Error>> {
         "ICC-meas:",
         "ICC-view:",
         "Meta:",
-        "IFD1:",
         "Vivo:",
     ];
     const SKIP_FILES: [&str; 3] = ["broken.jpg", "endless_loop.jpg", "invalid-gps"];
-    const KNOWN_KEYS: [&str; 24] = [
+    const KNOWN_KEYS: [&str; 26] = [
         "Composite:GPSAltitude",
         "Composite:FocalLength35efl",
         "Composite:Flash",
@@ -319,6 +323,8 @@ fn compare() -> Result<(), Box<dyn Error>> {
         "Composite:HyperfocalDistance",
         "File:Comment",
         "ExifIFD:MakerNoteUnknownText",
+        "IFD1:ThumbnailImage",
+        "IFD1:ThumbnailOffset",
         "XMP-exif:FlashFired",
         "XMP-exif:FlashFunction",
         "XMP-exif:FlashMode",
