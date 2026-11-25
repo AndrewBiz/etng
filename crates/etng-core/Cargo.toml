@@ -1,0 +1,17 @@
+[package]
+name = "etng-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Metadata reading engine for etng"
+
+[dependencies]
+etng-tags.workspace = true
+kamadak-exif.workspace = true
+quick-xml.workspace = true
+rayon.workspace = true
+serde_json.workspace = true
+memmap2.workspace = true
+chrono.workspace = true
+md-5.workspace = true

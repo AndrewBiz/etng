@@ -1,0 +1,18 @@
+[{
+  "SourceFile": "tests/corpus/synthetic/truncated.heic",
+  "ExifTool:ExifToolVersion": 13.55,
+  "ExifTool:Warning": "Truncated 'meta' data (missing 2590 bytes)",
+  "System:FileName": "truncated.heic",
+  "System:Directory": "tests/corpus/synthetic",
+  "System:FileSize": "1024 bytes",
+  "System:FileModifyDate": "2026:11:25 12:22:03+03:00",
+  "System:FileAccessDate": "2026:11:25 12:22:03+03:00",
+  "System:FileInodeChangeDate": "2026:11:25 12:22:03+03:00",
+  "System:FilePermissions": "-rw-r--r--",
+  "File:FileType": "HEIC",
+  "File:FileTypeExtension": "heic",
+  "File:MIMEType": "image/heic",
+  "QuickTime:MajorBrand": "High Efficiency Image Format HEVC still image (.HEIC)",
+  "QuickTime:MinorVersion": "0.0.0",
+  "QuickTime:CompatibleBrands": ["mif1","MiHE","miaf","MiHB","heic"]
+}]
