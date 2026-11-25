@@ -164,6 +164,12 @@ impl<W: Write> Emitter<W> {
     }
 
     fn tag_value(&self, tag: &Tag) -> String {
+        if let Value::Bytes(bytes) = &tag.value {
+            if self.opts.binary {
+                return json_string(&format!("base64:{}", crate::base64::encode(bytes)));
+            }
+            return json_string(&tag.value.display());
+        }
         if !self.opts.numeric
             && let Some(print) = &tag.print
         {
@@ -195,7 +201,7 @@ impl<W: Write> Emitter<W> {
                     display
                 }
             }
-            Value::Bytes(_) => json_string(&tag.value.display()),
+            Value::Bytes(_) => unreachable!("binary values return before the scalar match"),
         }
     }
 

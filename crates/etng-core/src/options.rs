@@ -30,6 +30,8 @@ pub struct ReadOptions {
     /// `-s`: accepted for compatibility; JSON keys are unchanged.
     pub short: bool,
     pub quiet: bool,
+    /// `-b`: emit binary values raw (text) or as `base64:` strings (JSON).
+    pub binary: bool,
     /// Selected tags, normalized to uppercase: `TAG` or `GROUP:TAG`.
     pub selection: Vec<String>,
     pub fallback: FallbackMode,
@@ -42,6 +44,7 @@ impl Default for ReadOptions {
             numeric: false,
             short: false,
             quiet: false,
+            binary: false,
             selection: Vec::new(),
             fallback: FallbackMode::Auto,
         }

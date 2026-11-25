@@ -214,6 +214,14 @@ fn parse_jpeg(data: &[u8], opts: &ReadOptions) -> ParseResult {
             &mut warnings,
             opts.numeric,
         );
+        push_embedded_image(
+            &mut tags,
+            exif_payload,
+            "IFD1",
+            "ThumbnailOffset",
+            "ThumbnailLength",
+            "ThumbnailImage",
+        );
     }
     if let Some(photoshop) = info.photoshop {
         if let Some(iim) = iptc::extract_iim(photoshop) {
@@ -248,8 +256,16 @@ fn parse_tiff(data: &[u8], file_type: FileType, opts: &ReadOptions) -> ParseResu
     let little_endian = data.starts_with(b"II");
     push_byte_order(&mut tags, little_endian);
     exif::parse(data, little_endian, &mut tags, &mut warnings, opts.numeric);
+    push_embedded_image(
+        &mut tags,
+        data,
+        "IFD1",
+        "ThumbnailOffset",
+        "ThumbnailLength",
+        "ThumbnailImage",
+    );
     if file_type == FileType::Cr2 {
-        adjust_cr2(&mut tags);
+        adjust_cr2(&mut tags, data);
     }
     let width = find_int(&tags, "ImageWidth");
     let height = find_int(&tags, "ImageHeight");
@@ -273,6 +289,14 @@ fn parse_heic(data: &[u8], opts: &ReadOptions) -> ParseResult {
                 &mut tags,
                 &mut warnings,
                 opts.numeric,
+            );
+            push_embedded_image(
+                &mut tags,
+                payload,
+                "IFD1",
+                "ThumbnailOffset",
+                "ThumbnailLength",
+                "ThumbnailImage",
             );
         }
         None => warnings.push("HEIC: EXIF item not found".to_string()),
@@ -344,8 +368,7 @@ fn push_composite(tags: &mut Vec<Tag>, width: Option<u32>, height: Option<u32>) 
 
 /// CR2 reuses TIFF tags 273/279 for the preview image and hides the TIFF
 /// bits-per-sample tag, matching ExifTool's CR2 interpretation.
-fn adjust_cr2(tags: &mut Vec<Tag>) {
-    let mut preview_length: Option<u32> = None;
+fn adjust_cr2(tags: &mut Vec<Tag>, data: &[u8]) {
     tags.retain(|tag| !(tag.group1 == "IFD0" && tag.name == "BitsPerSample"));
     for tag in tags.iter_mut() {
         if tag.group1 != "IFD0" {
@@ -353,24 +376,62 @@ fn adjust_cr2(tags: &mut Vec<Tag>) {
         }
         match tag.name {
             "StripOffsets" => tag.name = "PreviewImageStart",
-            "StripByteCounts" => {
-                tag.name = "PreviewImageLength";
-                preview_length = tag
-                    .value
-                    .as_i64()
-                    .and_then(|value| u32::try_from(value).ok());
-            }
+            "StripByteCounts" => tag.name = "PreviewImageLength",
             _ => {}
         }
     }
-    if let Some(length) = preview_length {
-        tags.push(Tag::new(
-            "EXIF",
-            "IFD0",
-            "PreviewImage",
-            Value::Bytes(vec![0u8; length as usize]),
-        ));
+    push_embedded_image(
+        tags,
+        data,
+        "IFD0",
+        "PreviewImageStart",
+        "PreviewImageLength",
+        "PreviewImage",
+    );
+}
+
+/// Insert an embedded image payload after its length tag. Offsets are relative
+/// to `data` (the TIFF payload for JPEG/HEIC, the file for TIFF/CR2).
+fn push_embedded_image(
+    tags: &mut Vec<Tag>,
+    data: &[u8],
+    group1: &'static str,
+    offset_name: &str,
+    length_name: &str,
+    output_name: &'static str,
+) {
+    let (Some(offset), Some(length)) = (
+        find_u32_in(tags, group1, offset_name),
+        find_u32_in(tags, group1, length_name),
+    ) else {
+        return;
+    };
+    let start = offset as usize;
+    let Some(end) = start.checked_add(length as usize) else {
+        return;
+    };
+    let Some(bytes) = data.get(start..end) else {
+        return;
+    };
+    if bytes.is_empty() {
+        return;
     }
+    let position = tags
+        .iter()
+        .rposition(|tag| tag.group1 == group1 && tag.name == length_name)
+        .map(|index| index + 1)
+        .unwrap_or(tags.len());
+    tags.insert(
+        position,
+        Tag::new("EXIF", group1, output_name, Value::Bytes(bytes.to_vec())),
+    );
+}
+
+fn find_u32_in(tags: &[Tag], group1: &str, name: &str) -> Option<u32> {
+    tags.iter()
+        .find(|tag| tag.group1 == group1 && tag.name == name)
+        .and_then(|tag| tag.value.as_i64())
+        .and_then(|value| u32::try_from(value).ok())
 }
 
 fn push_byte_order(tags: &mut Vec<Tag>, little_endian: bool) {

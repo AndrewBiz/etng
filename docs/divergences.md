@@ -11,7 +11,7 @@ listed here. Entries are deliberate scope decisions, not silent bugs.
 | `QuickTime:` | absent | ISO-BMFF track/property metadata (brands, HEVC configuration, auxiliary images) is out of scope for the read-only MVP. |
 | `ICC_Profile:`, `ICC-header:`, `ICC-meas:`, `ICC-view:` | absent | ICC profile parsing is a separate subsystem. |
 | `Meta:` | absent | HEIF meta-box internals (`MetaImageSize`, `PrimaryItemReference`). |
-| `IFD1:` | partial | Thumbnail IFD tags are emitted (compression, resolutions, Make/Model), except the binary `ThumbnailImage` and `ThumbnailOffset` whose offset base differs from exiftool's. |
+| `IFD1:` | partial | Thumbnail IFD tags are emitted, including real `ThumbnailImage` bytes (JPEG/TIFF/HEIC); only `ThumbnailOffset` differs because exiftool reports an adjusted base offset. |
 | `Vivo:` | absent | Vivo JSON metadata blob is not decoded. |
 
 ## Known missing or changed composite/derived tags
@@ -51,8 +51,17 @@ tag parity.
 - **DNG/NEF/CR2 detection** uses the file extension to disambiguate TIFF-family
   containers when the signature alone is ambiguous (exiftool does the same for
   extension-based TIFF variants). CR2 preview tags (273/279) are re-interpreted
-  as `PreviewImageStart`/`PreviewImageLength`, matching exiftool; the preview
-  bytes themselves are reported as a binary-data placeholder.
+  as `PreviewImageStart`/`PreviewImageLength`, matching exiftool; `-b` returns
+  the real preview bytes.
+- **`-b` and fallback**: binary mode never delegates to the system exiftool, so
+  formats that rely on fallback (for example CR3) produce no binary output.
+  EXIF-embedded thumbnails and CR2 previews are extracted natively.
+- **`-b` scalar values** are printed without print conversion (`-Orientation`
+  yields `1`), and selected tags are concatenated in argument order, matching
+  exiftool. JSON mode emits binary values as `"base64:<data>"`.
+- **`-b` without a tag selection** follows etng's stored values. Tags kept as
+  normalized strings (for example `ExifVersion` or `YCbCrSubSampling`) may
+  differ from exiftool's raw byte-list form; use `-b -TAG` for extraction.
 - **XMP multi-values** are joined with `, ` and represented as strings, except
   booleans (`True`/`False` → JSON `true`/`false`) and numeric/rational strings
   which become JSON numbers.

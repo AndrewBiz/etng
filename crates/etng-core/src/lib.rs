@@ -13,6 +13,7 @@
 //! println!("{} tags", report.tags.len());
 //! ```
 
+pub mod base64;
 pub mod compare;
 pub mod compat;
 pub mod exif;

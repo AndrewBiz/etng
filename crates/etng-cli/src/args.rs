@@ -50,6 +50,7 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Cli, String> {
             "-s" => cli.opts.short = true,
             "-n" => cli.opts.numeric = true,
             "-q" => cli.opts.quiet = true,
+            "-b" | "-binary" | "--binary" => cli.opts.binary = true,
             "-r" => cli.recursive = true,
             "-ver" => cli.show_version = true,
             "-h" | "--help" => cli.show_help = true,
@@ -145,6 +146,7 @@ Options:
   -s               принимать флаг exiftool (имена полей не меняются)
   -n               машинные значения без печатных конверсий
   -q               подавить некритичные предупреждения
+  -b, -binary      сырые значения: байты в stdout, base64 в JSON
   -r               рекурсивный обход каталогов
   -ext EXT         фильтр по расширению (можно повторять)
   -TAG, -GROUP:TAG выбрать конкретные теги

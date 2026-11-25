@@ -65,6 +65,27 @@ def main():
         if next_offset:
             struct.pack_into(LE + "I", data, relocated + 2 + count * 12, next_offset + 4)
 
+    # CR2 reinterprets the TIFF strip as the preview image. Embed a real JPEG
+    # there so `-b -PreviewImage` has extractable bytes, like a camera CR2.
+    preview = ROOT / "synthetic" / "base.jpg"
+    if preview.exists():
+        jpeg = preview.read_bytes()
+        relocated = ifd0 + 4
+        count = struct.unpack_from(LE + "H", data, relocated)[0]
+        start = length = None
+        for index in range(count):
+            entry = relocated + 2 + index * 12
+            tag = struct.unpack_from(LE + "H", data, entry)[0]
+            if tag == 0x0111:
+                start = struct.unpack_from(LE + "I", data, entry + 8)[0]
+            elif tag == 0x0117:
+                length = struct.unpack_from(LE + "I", data, entry + 8)[0]
+        if start is not None and length is not None:
+            if len(jpeg) > length:
+                raise SystemExit("base.jpg does not fit into the preview strip")
+            data[start : start + length] = b"\0" * length
+            data[start : start + len(jpeg)] = jpeg
+
     TARGET.write_bytes(data)
     print(f"wrote {TARGET} ({len(data)} bytes, {len(offsets)} IFDs)")
 

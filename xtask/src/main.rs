@@ -308,7 +308,7 @@ fn compare() -> Result<(), Box<dyn Error>> {
         "Vivo:",
     ];
     const SKIP_FILES: [&str; 3] = ["broken.jpg", "endless_loop.jpg", "invalid-gps"];
-    const KNOWN_KEYS: [&str; 26] = [
+    const KNOWN_KEYS: [&str; 25] = [
         "Composite:GPSAltitude",
         "Composite:FocalLength35efl",
         "Composite:Flash",
@@ -323,7 +323,6 @@ fn compare() -> Result<(), Box<dyn Error>> {
         "Composite:HyperfocalDistance",
         "File:Comment",
         "ExifIFD:MakerNoteUnknownText",
-        "IFD1:ThumbnailImage",
         "IFD1:ThumbnailOffset",
         "XMP-exif:FlashFired",
         "XMP-exif:FlashFunction",
@@ -419,7 +418,41 @@ fn compare() -> Result<(), Box<dyn Error>> {
             );
         }
         files += 1;
-        if !only_expected.is_empty() || !only_actual.is_empty() || !changed.is_empty() {
+        let mut binary_ok = true;
+        if let Some(expected_object) = expected.as_object() {
+            for key in expected_object.keys() {
+                let tag = key.rsplit(':').next().unwrap_or_default();
+                if tag != "ThumbnailImage" && tag != "PreviewImage" {
+                    continue;
+                }
+                // Only EXIF-embedded images are extracted natively; CR3/QuickTime
+                // previews come from the fallback path, which `-b` disables.
+                if !(key.starts_with("IFD0:") || key.starts_with("IFD1:")) {
+                    continue;
+                }
+                let selection = format!("-{tag}");
+                let ours = Command::new("target/debug/etng")
+                    .arg("-b")
+                    .arg(&selection)
+                    .arg(&path)
+                    .output()?;
+                let theirs = Command::new("exiftool")
+                    .arg("-b")
+                    .arg(&selection)
+                    .arg(&path)
+                    .output()?;
+                if ours.stdout != theirs.stdout {
+                    println!(
+                        "  binary {tag}: {} bytes from etng, {} from exiftool",
+                        ours.stdout.len(),
+                        theirs.stdout.len()
+                    );
+                    binary_ok = false;
+                }
+            }
+        }
+        if !only_expected.is_empty() || !only_actual.is_empty() || !changed.is_empty() || !binary_ok
+        {
             failures += 1;
         }
     }

@@ -258,3 +258,136 @@ fn delegate_receives_literal_path_without_shell() {
     assert!(log_text.lines().any(|line| line == weird.to_str().unwrap()));
     let _ = fs::remove_dir_all(dir);
 }
+
+#[test]
+fn binary_scalars_are_raw_and_unseparated() {
+    let output = Command::new(bin())
+        .args([
+            "-b",
+            "-Make",
+            "-Orientation",
+            corpus("real/Canon_40D.jpg").to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_eq!(output.stdout, b"Canon1");
+}
+
+#[test]
+fn binary_selection_order_follows_arguments() {
+    let output = Command::new(bin())
+        .args([
+            "-b",
+            "-Model",
+            "-Make",
+            corpus("real/Canon_40D.jpg").to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_eq!(output.stdout, b"Canon EOS 40DCanon");
+}
+
+#[test]
+fn binary_extracts_jpeg_thumbnail() {
+    let output = Command::new(bin())
+        .args([
+            "-b",
+            "-ThumbnailImage",
+            corpus("real/Canon_40D.jpg").to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_eq!(output.stdout.len(), 1378);
+    assert_eq!(&output.stdout[..2], &[0xFF, 0xD8]);
+    assert_eq!(&output.stdout[output.stdout.len() - 2..], &[0xFF, 0xD9]);
+}
+
+#[test]
+fn binary_extracts_cr2_preview_bytes() {
+    let output = Command::new(bin())
+        .args([
+            "-b",
+            "-PreviewImage",
+            corpus("synthetic/cr2_sample.cr2").to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(!output.stdout.is_empty());
+    let jpeg = fs::read(corpus("synthetic/base.jpg")).unwrap();
+    assert_eq!(output.stdout.len(), 9216);
+    assert!(output.stdout.starts_with(&jpeg));
+}
+
+#[test]
+fn binary_json_uses_base64_prefix() {
+    let output = Command::new(bin())
+        .args([
+            "-j",
+            "-b",
+            "-ThumbnailImage",
+            corpus("real/Canon_40D.jpg").to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let value = json[0]["ThumbnailImage"].as_str().unwrap();
+    assert!(value.starts_with("base64:/9j/"), "{value}");
+    assert!(value.len() > 1000);
+}
+
+#[test]
+fn default_json_keeps_binary_placeholder() {
+    let output = Command::new(bin())
+        .args([
+            "-j",
+            "-ThumbnailImage",
+            corpus("real/Canon_40D.jpg").to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(
+        json[0]["ThumbnailImage"],
+        "(Binary data 1378 bytes, use -b option to extract)"
+    );
+}
+
+#[test]
+fn binary_system_values_are_raw() {
+    let output = Command::new(bin())
+        .args([
+            "-b",
+            "-FileSize",
+            "-FilePermissions",
+            "-FileTypeExtension",
+            corpus("synthetic/base.jpg").to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let expected = format!(
+        "{}100644JPG",
+        fs::metadata(corpus("synthetic/base.jpg")).unwrap().len()
+    );
+    assert_eq!(String::from_utf8_lossy(&output.stdout), expected);
+}
+
+#[test]
+fn binary_errors_stay_off_stdout() {
+    let dir = temp_dir("binary-error");
+    let path = dir.join("note.txt");
+    fs::write(&path, b"hello").unwrap();
+    let output = Command::new(bin())
+        .args(["-b", "--fallback=never", path.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("Unknown file type"));
+    let _ = fs::remove_dir_all(dir);
+}
