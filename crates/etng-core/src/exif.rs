@@ -355,7 +355,7 @@ fn to_value(value: &ExifValue, def: &etng_tags::TagDef) -> Option<Value> {
                         .trim_end_matches('\0')
                         .to_string(),
                 )
-            } else if !def.values.is_empty() {
+            } else if def.has_values() {
                 let labels: Vec<&str> = bytes
                     .iter()
                     .map(|byte| def.print_value(&byte.to_string()).unwrap_or("?"))

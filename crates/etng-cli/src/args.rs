@@ -129,14 +129,8 @@ fn parse_fallback(value: &str) -> Result<FallbackMode, String> {
 fn tag_exists(selection: &str) -> bool {
     let tables = etng_tags::tables();
     match selection.split_once(':') {
-        Some((group, name)) => tables.defs().iter().any(|def| {
-            def.name.eq_ignore_ascii_case(name)
-                && (def.g1.eq_ignore_ascii_case(group) || def.g0.eq_ignore_ascii_case(group))
-        }),
-        None => tables
-            .defs()
-            .iter()
-            .any(|def| def.name.eq_ignore_ascii_case(selection)),
+        Some((group, name)) => tables.has_group_name(group, name),
+        None => tables.has_name(selection),
     }
 }
 

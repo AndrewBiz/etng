@@ -1,7 +1,8 @@
 //! Tag tables generated from a snapshot of `exiftool -listx -f`.
 //!
-//! The table is embedded as compact TSV and parsed lazily on first lookup, so
-//! `etng -ver` and argument parsing never pay for it.
+//! The embedded TSV is indexed once (cheap: group 1 and table/id only), and a
+//! group's tag definitions are parsed only when that group is first used. This
+//! keeps single-file runs fast without changing any observable output.
 
 use std::collections::HashMap;
 use std::sync::OnceLock;
@@ -25,201 +26,354 @@ pub struct TagDef {
     pub name: &'static str,
     pub typ: &'static str,
     pub writable: bool,
-    /// Print-conversion pairs (raw id, English label).
-    pub values: Vec<(&'static str, &'static str)>,
+    /// Position in the generated file, used to preserve first-definition
+    /// semantics for tables that appear in several groups.
+    seq: u32,
+    /// Raw print-conversion field (`id\u{1e}label` pairs separated by `\u{1d}`).
+    values_raw: &'static str,
 }
 
 impl TagDef {
     pub fn print_value(&self, raw: &str) -> Option<&'static str> {
         let raw = raw.trim();
-        self.values
-            .iter()
-            .find(|(id, _)| *id == raw)
-            .map(|(_, label)| *label)
+        for pair in self.values_raw.split(PAIR_SEP) {
+            if let Some((id, label)) = pair.split_once(ID_SEP)
+                && id == raw
+            {
+                return Some(label);
+            }
+        }
+        None
+    }
+
+    pub fn has_values(&self) -> bool {
+        !self.values_raw.is_empty()
     }
 }
 
-pub struct Tables {
+struct GroupData {
     defs: Vec<TagDef>,
-    by_group_name: HashMap<(&'static str, &'static str), usize>,
+    by_name: HashMap<&'static str, usize>,
     by_table_id: HashMap<(&'static str, &'static str), usize>,
-    groups: Vec<&'static str>,
+    by_id: HashMap<&'static str, usize>,
+}
+
+pub struct Tables {
+    raw: &'static str,
+    lines_by_group: HashMap<&'static str, Vec<(u32, &'static str)>>,
+    /// Group 1 candidates for each table, in first-appearance order. Most
+    /// tables belong to exactly one group, so this map has ~1.2k entries
+    /// instead of one entry per tag.
+    table_groups: HashMap<&'static str, Vec<&'static str>>,
+    group_names: Vec<&'static str>,
+    loaded: HashMap<&'static str, &'static OnceLock<&'static GroupData>>,
 }
 
 impl Tables {
     /// Look a tag up by family 1 group and ExifTool tag name.
-    pub fn find_name(&self, g1: &str, name: &str) -> Option<&TagDef> {
-        self.by_group_name
-            .get(&(leak_lookup(g1), leak_lookup(name)))
-            .map(|i| &self.defs[*i])
+    pub fn find_name(&self, g1: &str, name: &str) -> Option<&'static TagDef> {
+        let group = self.group(g1)?;
+        let index = group.by_name.get(intern(name))?;
+        Some(&group.defs[*index])
     }
 
     /// Look a tag up by table name and table-local id.
-    pub fn find_table_id(&self, table: &str, id: &str) -> Option<&TagDef> {
-        self.by_table_id
-            .get(&(leak_lookup(table), leak_lookup(id)))
-            .map(|i| &self.defs[*i])
+    pub fn find_table_id(&self, table: &str, id: &str) -> Option<&'static TagDef> {
+        let key = (intern(table), intern(id));
+        let candidates = self.table_groups.get(table)?;
+        let mut best: Option<&'static TagDef> = None;
+        for g1 in candidates {
+            let Some(group) = self.group(g1) else {
+                continue;
+            };
+            let Some(index) = group.by_table_id.get(&key) else {
+                continue;
+            };
+            let def = &group.defs[*index];
+            if best.is_none_or(|current| def.seq < current.seq) {
+                best = Some(def);
+            }
+        }
+        best
     }
 
     /// Look a tag up by family 1 group and table-local id (first table wins).
-    pub fn find_group_id(&self, g1: &str, id: &str) -> Option<&TagDef> {
-        self.defs.iter().find(|d| d.g1 == g1 && d.id == id)
-    }
-
-    pub fn defs(&self) -> &[TagDef] {
-        &self.defs
+    pub fn find_group_id(&self, g1: &str, id: &str) -> Option<&'static TagDef> {
+        let group = self.group(g1)?;
+        let index = group.by_id.get(intern(id))?;
+        Some(&group.defs[*index])
     }
 
     pub fn groups(&self) -> &[&'static str] {
-        &self.groups
+        &self.group_names
     }
 
     /// Distinct tag names known for a family 1 group, in table order.
     pub fn names_in_group(&self, g1: &str) -> Vec<&'static str> {
         let mut out: Vec<&'static str> = Vec::new();
-        for d in &self.defs {
-            if d.g1 == g1 && !out.contains(&d.name) {
-                out.push(d.name);
+        if let Some(group) = self.group(g1) {
+            for def in &group.defs {
+                if !out.contains(&def.name) {
+                    out.push(def.name);
+                }
             }
         }
         out
     }
 
-    pub fn def_count(&self) -> usize {
-        self.defs.len()
-    }
-}
-
-/// Lookups need `&'static str` keys. Dynamic names are interned once per
-/// distinct string; the set of callers is bounded (tables, groups, tag names),
-/// so the leak stays small.
-fn leak_lookup(s: &str) -> &'static str {
-    // Fast path: caller already passed a 'static-ish slice from a def.
-    // `Box::leak` is only reached for names coming from the outside world.
-    thread_local! {
-        static INTERN: std::cell::RefCell<HashMap<String, &'static str>> =
-            std::cell::RefCell::new(HashMap::new());
-    }
-    INTERN.with(|intern| {
-        let mut map = intern.borrow_mut();
-        if let Some(v) = map.get(s) {
-            return *v;
-        }
-        let leaked: &'static str = Box::leak(s.to_string().into_boxed_str());
-        map.insert(s.to_string(), leaked);
-        leaked
-    })
-}
-
-static TABLES: OnceLock<Tables> = OnceLock::new();
-
-pub fn tables() -> &'static Tables {
-    TABLES.get_or_init(build)
-}
-
-fn build() -> Tables {
-    let mut defs: Vec<TagDef> = Vec::with_capacity(32_000);
-    let mut by_group_name = HashMap::new();
-    let mut by_table_id = HashMap::new();
-    let mut groups: Vec<&'static str> = Vec::new();
-
-    for line in RAW.lines() {
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        }
-        let fields: Vec<&'static str> = line.split('\t').collect();
-        if fields.len() < 7 {
-            continue;
-        }
-        let values = if let Some(raw_values) = fields.get(7) {
-            parse_values(raw_values)
-        } else {
-            Vec::new()
-        };
-        let def = TagDef {
-            g0: fields[0],
-            g1: fields[1],
-            table: fields[2],
-            id: fields[3],
-            name: fields[4],
-            typ: fields[5],
-            writable: fields[6] == "1",
-            values,
-        };
-        let idx = defs.len();
-        if !groups.contains(&def.g1) {
-            groups.push(def.g1);
-        }
-        by_group_name.entry((def.g1, def.name)).or_insert(idx);
-        by_table_id.entry((def.table, def.id)).or_insert(idx);
-        defs.push(def);
+    /// Case-insensitive check used by CLI tag selection. Scans the raw table
+    /// without materialising any group.
+    pub fn has_name(&self, name: &str) -> bool {
+        self.raw.lines().any(|line| {
+            line.split('\t')
+                .nth(4)
+                .is_some_and(|candidate| candidate.eq_ignore_ascii_case(name))
+        })
     }
 
-    Tables {
-        defs,
-        by_group_name,
-        by_table_id,
-        groups,
+    /// Case-insensitive `-GROUP:TAG` check (family 0 or family 1 group).
+    pub fn has_group_name(&self, group: &str, name: &str) -> bool {
+        self.raw.lines().any(|line| {
+            let mut fields = line.split('\t');
+            let g0 = fields.next().unwrap_or_default();
+            let g1 = fields.next().unwrap_or_default();
+            let tag = fields.nth(2).unwrap_or_default();
+            (g0.eq_ignore_ascii_case(group) || g1.eq_ignore_ascii_case(group))
+                && tag.eq_ignore_ascii_case(name)
+        })
     }
-}
 
-fn parse_values(raw: &'static str) -> Vec<(&'static str, &'static str)> {
-    raw.split(PAIR_SEP)
-        .filter_map(|pair| pair.split_once(ID_SEP))
-        .collect()
+    pub fn loaded_group_count(&self) -> usize {
+        self.loaded
+            .values()
+            .filter(|slot| slot.get().is_some())
+            .count()
+    }
+
+    fn group(&self, g1: &str) -> Option<&'static GroupData> {
+        let slot = self.loaded.get(g1)?;
+        let group = slot.get_or_init(|| {
+            let (key, lines) = self
+                .lines_by_group
+                .get_key_value(g1)
+                .expect("group slot without lines");
+            Box::leak(Box::new(parse_group(key, lines)))
+        });
+        Some(*group)
+    }
 }
 
 /// Number of rows in the embedded table.
 pub fn row_count() -> usize {
     RAW.lines()
-        .filter(|l| !l.is_empty() && !l.starts_with('#'))
+        .filter(|line| !line.is_empty() && !line.starts_with('#'))
         .count()
+}
+
+fn parse_group(g1: &'static str, lines: &[(u32, &'static str)]) -> GroupData {
+    let mut defs = Vec::with_capacity(lines.len());
+    let mut by_name = HashMap::with_capacity(lines.len());
+    let mut by_table_id = HashMap::with_capacity(lines.len());
+    let mut by_id = HashMap::with_capacity(lines.len());
+
+    for (seq, line) in lines {
+        let mut fields = line.split('\t');
+        let g0 = fields.next().unwrap_or_default();
+        let _group = fields.next().unwrap_or_default();
+        let table = fields.next().unwrap_or_default();
+        let id = fields.next().unwrap_or_default();
+        let name = fields.next().unwrap_or_default();
+        let typ = fields.next().unwrap_or_default();
+        let writable = fields.next().unwrap_or("0") == "1";
+        let values_raw = fields.next().unwrap_or_default();
+        let def = TagDef {
+            g0,
+            g1,
+            table,
+            id,
+            name,
+            typ,
+            writable,
+            seq: *seq,
+            values_raw,
+        };
+        let index = defs.len();
+        by_name.entry(name).or_insert(index);
+        by_table_id.entry((table, id)).or_insert(index);
+        by_id.entry(id).or_insert(index);
+        defs.push(def);
+    }
+
+    GroupData {
+        defs,
+        by_name,
+        by_table_id,
+        by_id,
+    }
+}
+
+fn from_raw(raw: &'static str) -> Tables {
+    let mut lines_by_group: HashMap<&'static str, Vec<(u32, &'static str)>> = HashMap::new();
+    let mut table_groups: HashMap<&'static str, Vec<&'static str>> = HashMap::new();
+    let mut group_names: Vec<&'static str> = Vec::new();
+    let mut seen_groups: std::collections::HashSet<&'static str> = std::collections::HashSet::new();
+    let mut seq: u32 = 0;
+
+    for line in raw.lines() {
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let mut fields = line.split('\t');
+        let _g0 = fields.next().unwrap_or_default();
+        let g1 = fields.next().unwrap_or_default();
+        let table = fields.next().unwrap_or_default();
+        let id = fields.next().unwrap_or_default();
+        if g1.is_empty() || table.is_empty() || id.is_empty() {
+            continue;
+        }
+        lines_by_group.entry(g1).or_default().push((seq, line));
+        let candidates = table_groups.entry(table).or_default();
+        if !candidates.contains(&g1) {
+            candidates.push(g1);
+        }
+        if seen_groups.insert(g1) {
+            group_names.push(g1);
+        }
+        seq += 1;
+    }
+
+    let mut loaded = HashMap::with_capacity(group_names.len());
+    for group in &group_names {
+        loaded.insert(*group, &*Box::leak(Box::new(OnceLock::new())));
+    }
+
+    Tables {
+        raw,
+        lines_by_group,
+        table_groups,
+        group_names,
+        loaded,
+    }
+}
+
+static TABLES: OnceLock<Tables> = OnceLock::new();
+
+pub fn tables() -> &'static Tables {
+    TABLES.get_or_init(|| from_raw(RAW))
+}
+
+/// Lookup keys need `&'static str`. `find_*` receives caller strings; the set
+/// of distinct tables, ids, groups and names is bounded by the generated data,
+/// so the leak is small and happens at most once per string.
+fn intern(value: &str) -> &'static str {
+    thread_local! {
+        static INTERN: std::cell::RefCell<HashMap<String, &'static str>> =
+            std::cell::RefCell::new(HashMap::new());
+    }
+    INTERN.with(|cache| {
+        let mut cache = cache.borrow_mut();
+        if let Some(existing) = cache.get(value) {
+            return *existing;
+        }
+        let leaked: &'static str = Box::leak(value.to_string().into_boxed_str());
+        cache.insert(value.to_string(), leaked);
+        leaked
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[test]
-    fn exif_make_is_known() {
-        let def = tables()
-            .find_table_id("Exif::Main", "271")
-            .expect("Exif::Main/271 must exist");
-        assert_eq!(def.name, "Make");
-        assert_eq!(def.g1, "IFD0");
+    const FIXTURE: &str = "\
+EXIF\tIFD1\tExif::Main\t513\tThumbnailOffset\tlong\t1\t
+EXIF\tIFD0\tExif::Main\t271\tMake\tstring\t1\t
+EXIF\tIFD0\tExif::Main\t274\tOrientation\tint16u\t1\t6\u{1e}Rotate 90 CW
+EXIF\tIFD0\tExif::Main\t513\tPreviewImageStart\tlong\t1\t
+XMP\tXMP-dc\tXMP::dc\ttitle\tTitle\tlang-alt\t1\t
+IPTC\tIPTC\tIPTC::ApplicationRecord\t25\tKeywords\tstring\t1\t
+";
+
+    fn fixture() -> Tables {
+        from_raw(FIXTURE)
     }
 
     #[test]
-    fn orientation_print_values() {
-        let def = tables()
+    fn lookup_by_name_and_id() {
+        let tables = fixture();
+        let make = tables.find_table_id("Exif::Main", "271").expect("Make");
+        assert_eq!(make.name, "Make");
+        assert_eq!(make.g1, "IFD0");
+        let title = tables.find_name("XMP-dc", "Title").expect("Title");
+        assert_eq!(title.id, "title");
+    }
+
+    #[test]
+    fn ambiguous_table_preserves_first_definition() {
+        let tables = fixture();
+        let thumbnail = tables
+            .find_table_id("Exif::Main", "513")
+            .expect("ThumbnailOffset");
+        assert_eq!(thumbnail.name, "ThumbnailOffset");
+        assert_eq!(thumbnail.g1, "IFD1");
+    }
+
+    #[test]
+    fn print_values_are_parsed_on_demand() {
+        let tables = fixture();
+        let orientation = tables
             .find_table_id("Exif::Main", "274")
-            .expect("Orientation must exist");
-        assert_eq!(def.print_value("6"), Some("Rotate 90 CW"));
+            .expect("Orientation");
+        assert!(orientation.has_values());
+        assert_eq!(orientation.print_value("6"), Some("Rotate 90 CW"));
+        assert_eq!(orientation.print_value("1"), None);
+        assert!(!tables.find_name("IFD0", "Make").unwrap().has_values());
     }
 
     #[test]
-    fn iptc_keywords_known() {
-        let def = tables()
-            .find_table_id("IPTC::ApplicationRecord", "25")
-            .expect("IPTC Keywords must exist");
-        assert_eq!(def.name, "Keywords");
-        assert_eq!(def.g1, "IPTC");
+    fn groups_are_parsed_lazily() {
+        let tables = fixture();
+        assert_eq!(tables.loaded_group_count(), 0);
+        assert!(tables.find_name("IFD0", "Make").is_some());
+        assert_eq!(tables.loaded_group_count(), 1);
+        assert!(tables.find_name("XMP-dc", "Title").is_some());
+        assert_eq!(tables.loaded_group_count(), 2);
     }
 
     #[test]
-    fn xmp_dc_title_known() {
-        let def = tables()
-            .find_table_id("XMP::dc", "title")
-            .expect("XMP dc:title must exist");
-        assert_eq!(def.name, "Title");
-        assert_eq!(def.g1, "XMP-dc");
+    fn selection_helpers_do_not_load_groups() {
+        let tables = fixture();
+        assert!(tables.has_name("Make"));
+        assert!(tables.has_group_name("IFD0", "Make"));
+        assert!(!tables.has_name("DefinitelyNotATag"));
+        assert_eq!(tables.loaded_group_count(), 0);
     }
 
     #[test]
-    fn canon_tables_present() {
-        assert!(
-            tables().find_table_id("Canon::Main", "16").is_some(),
-            "Canon::Main must be generated"
+    fn real_tables_cover_known_tags() {
+        let tables = tables();
+        assert_eq!(
+            tables
+                .find_table_id("Exif::Main", "271")
+                .expect("Make")
+                .name,
+            "Make"
         );
+        assert_eq!(
+            tables
+                .find_table_id("IPTC::ApplicationRecord", "25")
+                .expect("Keywords")
+                .g1,
+            "IPTC"
+        );
+        assert!(tables.find_table_id("Canon::Main", "16").is_some());
+        assert_eq!(
+            tables
+                .find_table_id("Exif::Main", "513")
+                .expect("ThumbnailOffset")
+                .g1,
+            "IFD1"
+        );
+        assert_eq!(row_count(), 31_942);
     }
 }

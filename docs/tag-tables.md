@@ -34,3 +34,12 @@ The generated `crates/etng-tags/data/tags.tsv` has these columns:
 Regeneration is deterministic: running `cargo xtask generate-tags` twice in a
 row leaves `tags.tsv` unchanged (`git diff --exit-code` is clean). Update the
 snapshot and the table in one commit together with the golden corpus.
+
+## Runtime loading
+
+`etng-tags` indexes the 31 942 rows once (group 1 + table/id, no `TagDef`
+parsing) and parses a group's definitions only when that group is first used.
+A typical JPEG loads IFD0/ExifIFD/GPS/IPTC/XMP groups; unused groups (Canon,
+Nikon, QuickTime, …) are never materialised. Print-conversion pairs stay as a
+slice of the original row and are parsed on demand, so no per-tag `Vec` is
+allocated at startup.
