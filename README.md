@@ -1,5 +1,8 @@
 # etng
 
+[![CI](https://github.com/AndrewBiz/etng/actions/workflows/ci.yml/badge.svg)](https://github.com/AndrewBiz/etng/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 ExifTool нового поколения: быстрый read-only CLI на Rust с выводом, совместимым
 с `exiftool` — JSON, CSV, текстом и сырыми байтами. Без Perl, с нативным
 разбором контейнеров и опциональным fallback на системный exiftool.
