@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.8.0 — 2026-11-26
+
+### Запись дат (MVP)
+
+- `-DateTimeOriginal=`, `-CreateDate=`, `-ModifyDate=`, `-AllDates=`,
+  `-FileModifyDate=`.
+- Перезапись существующих EXIF-дат в JPEG/TIFF-family.
+- Атомарная замена файла, сохранение прав; ошибка при отсутствии тега без
+  изменения файла.
+- `FileModifyDate` через mtime, локальная зона.
+- `-overwrite_original` принимается для совместимости.
+
+### Проверки
+
+- 102 теста, clippy/fmt чистые, `xtask compare` — 17 файлов, 0 расхождений.
+
 ## 0.7.0 — 2026-11-26
 
 ### MTS/M2TS
