@@ -99,6 +99,12 @@ tag parity.
   with every test suite; a full `cargo-fuzz` campaign is not part of this
   change.
 
+## Write mode
+
+- Only existing EXIF date fields are rewritten; missing tags are not inserted.
+- JPEG and TIFF-family containers only; HEIC/CR3/MOV writes are not implemented.
+- `FileModifyDate` uses local time and is set after the atomic file replacement.
+
 ## Not implemented by design
 
 Write mode, `-csv`/`-X`/`-php`/`-html` output, video/audio containers, XMP/ICC
