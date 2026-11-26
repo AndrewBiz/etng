@@ -810,7 +810,7 @@ fn writes_file_modify_date() {
 }
 
 #[test]
-fn write_missing_date_tag_fails_without_corrupting_file() {
+fn write_missing_date_tag_inserts_without_corrupting_file() {
     let dir = temp_dir("write-missing");
     fs::create_dir_all(&dir).unwrap();
     let path = dir.join("copy.jpg");
@@ -824,8 +824,19 @@ fn write_missing_date_tag_fails_without_corrupting_file() {
         ])
         .output()
         .unwrap();
-    assert_eq!(output.status.code(), Some(1));
-    assert_eq!(fs::read(&path).unwrap(), before);
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_ne!(fs::read(&path).unwrap(), before);
+    let read = Command::new(bin())
+        .args(["-j", "-G1", "-DateTimeOriginal", path.to_str().unwrap()])
+        .output()
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&read.stdout).unwrap();
+    assert_eq!(json[0]["IFD0:DateTimeOriginal"], "2024:05:06 07:08:09");
 }
 
 #[test]

@@ -116,8 +116,8 @@ etng -AllDates='2024:05:06 07:08:09' -FileModifyDate='2024:05:06 07:08:09' photo
 ## Ограничения
 
 - **Запись дат:** JPEG/TIFF, HEIC/CR3, MOV. В HEIC/CR3/MOV перезаписываются
-  существующие даты (вставка отсутствующих пока не поддержана); MOV —
-  `mvhd` CreateDate/ModifyDate.
+  существующие даты; в HEIC/CR3 отсутствующие даты вставляются (append-only
+  EXIF item/CMT box), MOV — `mvhd` CreateDate/ModifyDate.
 - **Запись MWG-текста:** только JPEG; XMP/IPTC при отсутствии создаются
   минимальные. `Keywords`/`Creator` принимают повторяемый флаг и пишут список.
 - **CR3 / Canon:** ColorData для JPEG/CR2 (версии 32/33/34/48/64/65), CTMD

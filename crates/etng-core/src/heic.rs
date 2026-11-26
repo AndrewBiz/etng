@@ -52,6 +52,174 @@ fn find_box<'a>(data: &'a [u8], kind: &[u8; 4]) -> Option<&'a [u8]> {
         .map(|b| b.payload)
 }
 
+/// Location of the EXIF item and its TIFF payload inside a HEIC file.
+#[derive(Clone, Copy, Debug)]
+pub struct ExifInfo {
+    pub item_id: u32,
+    pub item_start: usize,
+    pub item_len: usize,
+    pub tiff_start: usize,
+    pub tiff_len: usize,
+}
+
+/// Locate the EXIF item using `meta`/`iloc`.
+pub fn exif_info(data: &[u8]) -> Option<ExifInfo> {
+    let meta = find_box(data, b"meta")?;
+    let meta_payload = meta.get(4..)?;
+    let exif_id = find_exif_item_id(meta_payload)?;
+    let idat = find_box(meta_payload, b"idat");
+    let iloc_payload = find_box(meta_payload, b"iloc")?;
+    let mut locations = parse_iloc(iloc_payload)?;
+    let loc = locations.remove(&exif_id)?;
+    let item_start = match loc.construction_method {
+        0 => loc.offset as usize,
+        1 => {
+            let idat = idat?;
+            let idat_pos = idat.as_ptr() as usize - data.as_ptr() as usize;
+            idat_pos + loc.offset as usize
+        }
+        _ => return None,
+    };
+    let item_len = loc.length as usize;
+    let item = data.get(item_start..item_start.checked_add(item_len)?)?;
+    if item.len() < 4 {
+        return None;
+    }
+    let header_offset = u32::from_be_bytes([item[0], item[1], item[2], item[3]]) as usize;
+    let mut tiff_start = item_start.checked_add(4 + header_offset)?;
+    if data.get(tiff_start..tiff_start + 6) == Some(b"Exif\0\0") {
+        tiff_start += 6;
+    }
+    let tiff_len = item_start.checked_add(item_len)?.saturating_sub(tiff_start);
+    Some(ExifInfo {
+        item_id: exif_id,
+        item_start,
+        item_len,
+        tiff_start,
+        tiff_len,
+    })
+}
+
+/// Update the first extent of an `iloc` item (construction method 0 only).
+pub fn set_exif_location(
+    data: &mut [u8],
+    item_id: u32,
+    offset: u64,
+    length: u64,
+) -> Result<(), String> {
+    let meta = find_box(data, b"meta").ok_or_else(|| "meta box not found".to_string())?;
+    let meta_payload = meta
+        .get(4..)
+        .ok_or_else(|| "invalid meta box".to_string())?;
+    let iloc_payload =
+        find_box(meta_payload, b"iloc").ok_or_else(|| "iloc box not found".to_string())?;
+    let iloc_start = iloc_payload.as_ptr() as usize - data.as_ptr() as usize;
+    let version = *iloc_payload
+        .first()
+        .ok_or_else(|| "empty iloc".to_string())?;
+    let mut pos = iloc_start + 4;
+    let sizes = *data.get(pos).ok_or_else(|| "truncated iloc".to_string())?;
+    let offset_size = (sizes >> 4) as usize;
+    let length_size = (sizes & 0x0F) as usize;
+    let sizes2 = *data
+        .get(pos + 1)
+        .ok_or_else(|| "truncated iloc".to_string())?;
+    let base_offset_size = (sizes2 >> 4) as usize;
+    let index_size = if version >= 1 {
+        (sizes2 & 0x0F) as usize
+    } else {
+        0
+    };
+    pos += 2;
+    let count = if version < 2 {
+        let count = u16::from_be_bytes([
+            *data.get(pos).ok_or_else(|| "truncated iloc".to_string())?,
+            *data
+                .get(pos + 1)
+                .ok_or_else(|| "truncated iloc".to_string())?,
+        ]) as usize;
+        pos += 2;
+        count
+    } else {
+        let count = u32::from_be_bytes([
+            *data.get(pos).ok_or_else(|| "truncated iloc".to_string())?,
+            *data
+                .get(pos + 1)
+                .ok_or_else(|| "truncated iloc".to_string())?,
+            *data
+                .get(pos + 2)
+                .ok_or_else(|| "truncated iloc".to_string())?,
+            *data
+                .get(pos + 3)
+                .ok_or_else(|| "truncated iloc".to_string())?,
+        ]) as usize;
+        pos += 4;
+        count
+    };
+    let read = |data: &[u8], pos: usize, size: usize| -> Result<u64, String> {
+        let bytes = data
+            .get(pos..pos + size)
+            .ok_or_else(|| "truncated iloc".to_string())?;
+        let mut value = 0u64;
+        for byte in bytes {
+            value = (value << 8) | *byte as u64;
+        }
+        Ok(value)
+    };
+    for _ in 0..count {
+        let id = if version < 2 {
+            read(data, pos, 2)? as u32
+        } else {
+            read(data, pos, 4)? as u32
+        };
+        pos += if version < 2 { 2 } else { 4 };
+        let construction = if version >= 1 {
+            (read(data, pos, 2)? & 0x0F) as u16
+        } else {
+            0
+        };
+        pos += if version >= 1 { 2 } else { 0 };
+        pos += 2;
+        let _base = read(data, pos, base_offset_size)?;
+        pos += base_offset_size;
+        let extents = read(data, pos, 2)? as usize;
+        pos += 2;
+        for _ in 0..extents {
+            if index_size > 0 {
+                pos += index_size;
+            }
+            let offset_pos = pos;
+            let _offset = read(data, pos, offset_size)?;
+            pos += offset_size;
+            let length_pos = pos;
+            let _length = read(data, pos, length_size)?;
+            pos += length_size;
+            if id == item_id {
+                if construction != 0 {
+                    return Err("idat-relative EXIF item is not supported".to_string());
+                }
+                if offset_size == 0 || length_size == 0 {
+                    return Err("iloc extent has no offset/length fields".to_string());
+                }
+                write_be(data, offset_pos, offset_size, offset)?;
+                write_be(data, length_pos, length_size, length)?;
+                return Ok(());
+            }
+        }
+    }
+    Err("EXIF item not found in iloc".to_string())
+}
+
+fn write_be(data: &mut [u8], pos: usize, width: usize, value: u64) -> Result<(), String> {
+    if width == 0 || width > 8 || pos + width > data.len() {
+        return Err("invalid iloc field".to_string());
+    }
+    for index in 0..width {
+        data[pos + index] = (value >> (8 * (width - index - 1))) as u8;
+    }
+    Ok(())
+}
+
 /// Extract the EXIF payload (TIFF bytes) from a HEIC/HEIF file.
 pub fn extract_exif(data: &[u8]) -> Option<&[u8]> {
     let meta = find_box(data, b"meta")?;
