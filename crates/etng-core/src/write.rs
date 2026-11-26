@@ -18,9 +18,25 @@ pub const WRITABLE: [&str; 4] = [
     "FILEMODIFYDATE",
 ];
 
+pub const WRITABLE_TEXT: [&str; 7] = [
+    "CITY",
+    "COUNTRY",
+    "STATE",
+    "LOCATION",
+    "KEYWORDS",
+    "CREATOR",
+    "COPYRIGHT",
+];
+
 pub fn is_writable(name: &str) -> bool {
     let name = name.trim_start_matches('-').to_ascii_uppercase();
-    WRITABLE.contains(&name.as_str()) || name == "ALLDATES"
+    WRITABLE.contains(&name.as_str())
+        || WRITABLE_TEXT.contains(&name.as_str())
+        || name == "ALLDATES"
+}
+
+fn is_text(name: &str) -> bool {
+    WRITABLE_TEXT.contains(&name.to_ascii_uppercase().as_str())
 }
 
 pub fn normalize_date(value: &str) -> Result<String, String> {
@@ -38,9 +54,14 @@ pub fn normalize_date(value: &str) -> Result<String, String> {
 /// Apply metadata dates and/or FileModifyDate.
 pub fn write(path: &Path, assignments: &[(String, String)]) -> Result<usize, String> {
     let mut exif_updates = Vec::new();
+    let mut text_updates = Vec::new();
     let mut file_modify = None;
     for (name, value) in assignments {
         let name = name.trim_start_matches('-').to_ascii_uppercase();
+        if is_text(&name) {
+            text_updates.push((title_case(&name), value.clone()));
+            continue;
+        }
         let value = normalize_date(value)?;
         match name.as_str() {
             "FILEMODIFYDATE" => file_modify = Some(value),
@@ -73,11 +94,144 @@ pub fn write(path: &Path, assignments: &[(String, String)]) -> Result<usize, Str
         atomic_replace(path, &patched)?;
         written += exif_updates.len();
     }
+    if !text_updates.is_empty() {
+        let data = fs::read(path).map_err(|err| format!("{}: {err}", path.display()))?;
+        let patched = apply_exif_text(&data, &text_updates)?;
+        if let Some(updated) = date_sidecars::update_text(&patched, &text_updates)? {
+            atomic_replace(path, &updated)?;
+        } else if patched != data {
+            atomic_replace(path, &patched)?;
+        }
+        written += text_updates.len();
+    }
     if let Some(value) = file_modify {
         set_file_modify(path, &value)?;
         written += 1;
     }
     Ok(written)
+}
+
+fn apply_exif_text(data: &[u8], updates: &[(String, String)]) -> Result<Vec<u8>, String> {
+    let mut out = data.to_vec();
+    for (name, value) in updates {
+        let tag = match name.as_str() {
+            "Creator" => 0x013B,
+            "Copyright" => 0x8298,
+            _ => continue,
+        };
+        out = set_ifd0_string(&out, tag, value)?;
+    }
+    Ok(out)
+}
+
+fn set_ifd0_string(data: &[u8], tag: u16, value: &str) -> Result<Vec<u8>, String> {
+    let bounds = exif_bounds(data).ok_or_else(|| "no EXIF/TIFF payload found".to_string())?;
+    let tiff = Tiff::at(data, bounds.base).ok_or_else(|| "invalid TIFF header".to_string())?;
+    let ifd = tiff
+        .first_ifd_offset()
+        .and_then(|offset| tiff.read_ifd(offset))
+        .ok_or_else(|| "cannot read IFD0".to_string())?;
+    let bytes = value.as_bytes();
+    let count = bytes.len() + 1;
+    let mut tiff_data = data[bounds.base..bounds.end].to_vec();
+    let write_u32 = |buffer: &mut [u8], at: usize, number: u32| {
+        let raw = if tiff.le {
+            number.to_le_bytes()
+        } else {
+            number.to_be_bytes()
+        };
+        buffer[at..at + 4].copy_from_slice(&raw);
+    };
+    if let Some(entry) = ifd.entries.iter().find(|entry| entry.tag == tag) {
+        let entry_at = entry.entry_offset.saturating_sub(bounds.base);
+        let old_count = entry.count as usize;
+        if count <= old_count
+            && (count <= 4 || entry.value_or_offset as usize + count <= tiff_data.len())
+        {
+            if count <= 4 {
+                tiff_data[entry_at + 8..entry_at + 12].fill(0);
+                tiff_data[entry_at + 8..entry_at + 8 + bytes.len()].copy_from_slice(bytes);
+            } else {
+                let at = entry.value_or_offset as usize;
+                tiff_data[at..at + bytes.len()].copy_from_slice(bytes);
+                tiff_data[at + bytes.len()] = 0;
+            }
+            write_u32(&mut tiff_data, entry_at + 4, count as u32);
+            return rebuild_tiff(data, bounds, tiff_data);
+        }
+        let aligned = tiff_data.len() + (tiff_data.len() & 1);
+        let at = aligned;
+        tiff_data.resize(aligned, 0);
+        tiff_data.extend_from_slice(bytes);
+        tiff_data.push(0);
+        write_u32(&mut tiff_data, entry_at + 4, count as u32);
+        write_u32(&mut tiff_data, entry_at + 8, at as u32);
+        return rebuild_tiff(data, bounds, tiff_data);
+    }
+
+    let aligned = tiff_data.len() + (tiff_data.len() & 1);
+    let total = ifd.entries.len() + 1;
+    let values_start = aligned + 2 + total * 12 + 4;
+    let mut appended = vec![0u8; values_start + count - aligned];
+    let write_u16 = |buffer: &mut [u8], at: usize, number: u16| {
+        let raw = if tiff.le {
+            number.to_le_bytes()
+        } else {
+            number.to_be_bytes()
+        };
+        buffer[at..at + 2].copy_from_slice(&raw);
+    };
+    write_u16(&mut appended, 0, total as u16);
+    let mut entries = Vec::new();
+    for entry in &ifd.entries {
+        let start = entry.entry_offset;
+        let raw = data
+            .get(start..start + 12)
+            .ok_or_else(|| "IFD0 entry outside file".to_string())?;
+        entries.push((entry.tag, raw.to_vec()));
+    }
+    let mut entry = vec![0u8; 12];
+    write_u16(&mut entry, 0, tag);
+    write_u16(&mut entry, 2, 2);
+    write_u32(&mut entry, 4, count as u32);
+    write_u32(&mut entry, 8, values_start as u32);
+    appended[values_start - aligned..values_start - aligned + bytes.len()].copy_from_slice(bytes);
+    appended[values_start - aligned + bytes.len()] = 0;
+    entries.push((tag, entry));
+    entries.sort_by_key(|(tag, _)| *tag);
+    for (index, (_, raw)) in entries.iter().enumerate() {
+        let at = 2 + index * 12;
+        appended[at..at + 12].copy_from_slice(raw);
+    }
+    write_u32(&mut appended, 2 + total * 12, ifd.next);
+    let new_offset = aligned as u32;
+    tiff_data.resize(aligned, 0);
+    tiff_data.extend_from_slice(&appended);
+    let offset_raw = if tiff.le {
+        new_offset.to_le_bytes()
+    } else {
+        new_offset.to_be_bytes()
+    };
+    tiff_data[4..8].copy_from_slice(&offset_raw);
+    rebuild_tiff(data, bounds, tiff_data)
+}
+
+fn rebuild_tiff(data: &[u8], bounds: Bounds, tiff_data: Vec<u8>) -> Result<Vec<u8>, String> {
+    if let Some((marker, length)) = bounds.segment {
+        let new_length = 2 + 6 + tiff_data.len();
+        if new_length > u16::MAX as usize {
+            return Err("EXIF segment too large after text update".to_string());
+        }
+        let mut out = Vec::with_capacity(data.len() + tiff_data.len());
+        out.extend_from_slice(&data[..marker + 2]);
+        out.extend_from_slice(&(new_length as u16).to_be_bytes());
+        out.extend_from_slice(b"Exif\0\0");
+        out.extend_from_slice(&tiff_data);
+        out.extend_from_slice(&data[marker + 2 + length..]);
+        Ok(out)
+    } else {
+        Ok(tiff_data)
+    }
 }
 
 fn insert_dates(data: &[u8], updates: &[(String, String)]) -> Result<Vec<u8>, String> {
@@ -335,6 +489,13 @@ fn title_case(name: &str) -> String {
         "DATETIMEORIGINAL" => "DateTimeOriginal".to_string(),
         "CREATEDATE" => "CreateDate".to_string(),
         "MODIFYDATE" => "ModifyDate".to_string(),
+        "CITY" => "City".to_string(),
+        "COUNTRY" => "Country".to_string(),
+        "STATE" => "State".to_string(),
+        "LOCATION" => "Location".to_string(),
+        "KEYWORDS" => "Keywords".to_string(),
+        "CREATOR" => "Creator".to_string(),
+        "COPYRIGHT" => "Copyright".to_string(),
         other => other.to_string(),
     }
 }
