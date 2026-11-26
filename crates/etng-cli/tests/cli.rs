@@ -748,3 +748,82 @@ fn png_is_native_with_exif_and_png_chunks() {
     assert_eq!(object["PNG:ColorType"], "RGB");
     assert_eq!(object["IFD0:ImageWidth"], 64);
 }
+
+#[test]
+fn writes_datetime_original_in_place() {
+    let dir = temp_dir("write-dto");
+    fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("copy.jpg");
+    fs::copy(corpus("real/exif.jpg"), &path).unwrap();
+
+    let output = Command::new(bin())
+        .args([
+            "-DateTimeOriginal=2024:05:06 07:08:09",
+            path.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let read = Command::new(bin())
+        .args(["-j", "-G1", "-DateTimeOriginal", path.to_str().unwrap()])
+        .output()
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&read.stdout).unwrap();
+    assert_eq!(json[0]["ExifIFD:DateTimeOriginal"], "2024:05:06 07:08:09");
+}
+
+#[test]
+fn writes_file_modify_date() {
+    let dir = temp_dir("write-fmd");
+    fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("copy.jpg");
+    fs::copy(corpus("real/exif.jpg"), &path).unwrap();
+
+    let output = Command::new(bin())
+        .args([
+            "-FileModifyDate=2024:05:06 07:08:09",
+            path.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let read = Command::new(bin())
+        .args(["-j", "-G1", "-FileModifyDate", path.to_str().unwrap()])
+        .output()
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&read.stdout).unwrap();
+    assert!(
+        json[0]["System:FileModifyDate"]
+            .as_str()
+            .is_some_and(|value| value.starts_with("2024:05:06 07:08:09"))
+    );
+}
+
+#[test]
+fn write_missing_date_tag_fails_without_corrupting_file() {
+    let dir = temp_dir("write-missing");
+    fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("copy.jpg");
+    fs::copy(corpus("real/tif.tif"), &path).unwrap();
+    let before = fs::read(&path).unwrap();
+
+    let output = Command::new(bin())
+        .args([
+            "-DateTimeOriginal=2024:05:06 07:08:09",
+            path.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(fs::read(&path).unwrap(), before);
+}

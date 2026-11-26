@@ -35,6 +35,7 @@ pub mod read;
 pub mod sniff;
 pub mod system;
 pub mod tiff;
+pub mod write;
 pub mod xmp;
 
 pub use model::{FileReport, SystemFields, Tag, Value};

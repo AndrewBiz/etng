@@ -54,6 +54,17 @@ fn run() -> i32 {
         return 1;
     }
 
+    if !cli.writes.is_empty() {
+        let mut failed = false;
+        for path in &files {
+            if let Err(err) = etng_core::write::write(path, &cli.writes) {
+                eprintln!("etng: {}: {err}", path.display());
+                failed = true;
+            }
+        }
+        return if failed { 1 } else { 0 };
+    }
+
     if let Some(threads) = cli.threads {
         let _ = rayon::ThreadPoolBuilder::new()
             .num_threads(threads)

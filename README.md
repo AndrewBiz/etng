@@ -4,11 +4,12 @@
 [![Release](https://img.shields.io/github/v/release/AndrewBiz/etng?display_name=tag)](https://github.com/AndrewBiz/etng/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-ExifTool нового поколения: быстрый read-only CLI на Rust с выводом, совместимым
-с `exiftool` — JSON, CSV, текстом и сырыми байтами. Без Perl, с нативным
+ExifTool нового поколения: быстрый CLI на Rust с выводом, совместимым
+с `exiftool` — JSON, CSV, текстом и сырыми байтами. Чтение метаданных и
+запись дат. Без Perl, с нативным
 разбором контейнеров и опциональным fallback на системный exiftool.
 
-**Статус:** alpha (0.7.0). Ядро чтения стабильно, покрытие форматов расширяется.
+**Статус:** alpha (0.8.0). Ядро чтения стабильно, покрытие форматов расширяется.
 
 GitHub: https://github.com/AndrewBiz/etng · GitVerse: https://gitverse.ru/kazimir_bizik/etng
 
@@ -35,6 +36,8 @@ GitHub: https://github.com/AndrewBiz/etng · GitVerse: https://gitverse.ru/kazim
   - `-b` — сырые байты: миниатюры, `PreviewImage` (CR2/CR3/MPF-JPEG), base64 в JSON;
   - текст — `Tag : value` по файлу.
 - **Фильтры:** `-TAG` / `-GROUP:TAG`, `-x TAG` / `-x GROUP:TAG`, `-r`, `-ext`.
+- **Запись дат:** `DateTimeOriginal`, `CreateDate`, `ModifyDate`, `AllDates`,
+  `FileModifyDate`; атомарная замена файла.
 - **Пакетная обработка:** параллельная, с детерминированным порядком вывода.
 
 ## Установка
@@ -87,6 +90,10 @@ etng -j -b -ThumbnailImage photo.jpg   # base64 в JSON
 
 etng -j -x ThumbnailImage photo.jpg    # исключить тег
 etng -ver                              # версия совместимости
+
+# Запись дат (MVP, существующие теги в JPEG/TIFF)
+etng -DateTimeOriginal='2024:05:06 07:08:09' photo.jpg
+etng -AllDates='2024:05:06 07:08:09' -FileModifyDate='2024:05:06 07:08:09' photo.jpg
 ```
 
 Коды возврата: `0` — успех, `1` — предупреждения/частичный результат,
@@ -108,6 +115,8 @@ etng -ver                              # версия совместимости
 
 ## Ограничения
 
+- **Запись:** только даты и только JPEG/TIFF; HEIC/CR3/MOV и вставка
+  отсутствующих тегов пока не поддерживаются.
 - **CR3 / Canon:** ColorData для JPEG/CR2 (версии 32/33/34/48/64/65), CTMD
   Track4, FilterInfo, FocusBracketing и LevelInfo уже читаются; полный
   CanonCustom и сложные Composite ещё не разобраны,
@@ -120,6 +129,17 @@ etng -ver                              # версия совместимости
 - **MOV** — только заголовок и даты, без треков и кодеков.
 - `CompatibleBrands` в HEIC/CR3 выводится строкой, а не JSON-массивом.
 - Подробный список осознанных расхождений — в [`docs/divergences.md`](docs/divergences.md).
+
+## Запись дат
+
+MVP пишет только **существующие** поля дат в JPEG/TIFF-семействе и
+`FileModifyDate`. Новые поля не вставляются: если тега нет, команда завершается
+с ошибкой и файл не меняется. Замена атомарная (temp + rename), права файла
+сохраняются.
+
+Поддерживаемые цели: `DateTimeOriginal`, `CreateDate`, `ModifyDate`,
+`AllDates`, `FileModifyDate`. Формат даты: `YYYY:MM:DD HH:MM:SS` или
+`YYYY-MM-DD HH:MM:SS`. `-overwrite_original` принимается для совместимости.
 
 ## Замеры
 

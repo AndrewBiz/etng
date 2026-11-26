@@ -12,6 +12,7 @@ pub struct Cli {
     pub inputs: Vec<String>,
     pub show_help: bool,
     pub show_version: bool,
+    pub writes: Vec<(String, String)>,
     fallback_explicit: bool,
 }
 
@@ -26,6 +27,7 @@ impl Cli {
             inputs: Vec::new(),
             show_help: false,
             show_version: false,
+            writes: Vec::new(),
             fallback_explicit: false,
         }
     }
@@ -59,6 +61,7 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Cli, String> {
                 cli.opts.exclude.push(normalize_exclude(&value));
             }
             "-r" => cli.recursive = true,
+            "-overwrite_original" => {}
             "-ver" => cli.show_version = true,
             "-h" | "--help" => cli.show_help = true,
             "-ext" => {
@@ -94,6 +97,10 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Cli, String> {
                     && !value.is_empty()
                 {
                     cli.opts.exclude.push(normalize_exclude(value));
+                } else if let Some((name, value)) = other.trim_start_matches('-').split_once('=')
+                    && etng_core::write::is_writable(name)
+                {
+                    cli.writes.push((name.to_string(), value.to_string()));
                 } else {
                     let selection = other.trim_start_matches('-').to_string();
                     if selection.is_empty() {
@@ -176,6 +183,8 @@ Options:
   -TAG, -GROUP:TAG выбрать конкретные теги
   --threads N      число потоков (по умолчанию — число ядер)
   --fallback MODE  auto|never|always (по умолчанию auto)
+  -TAG=VALUE       записать дату: DateTimeOriginal, CreateDate, ModifyDate,
+                   FileModifyDate или AllDates
   -ver             версия совместимости с exiftool
   -h, --help       эта справка
 
@@ -209,6 +218,19 @@ mod tests {
     #[test]
     fn zero_threads_is_an_error() {
         assert!(args(&["--threads", "0", "a.jpg"]).is_err());
+    }
+
+    #[test]
+    fn parses_date_assignments() {
+        let cli = args(&[
+            "-DateTimeOriginal=2024:05:06 07:08:09",
+            "-FileModifyDate=2024:05:06 07:08:09",
+            "a.jpg",
+        ])
+        .unwrap();
+        assert_eq!(cli.writes.len(), 2);
+        assert_eq!(cli.writes[0].0, "DateTimeOriginal");
+        assert_eq!(cli.inputs, vec!["a.jpg"]);
     }
 
     #[test]
