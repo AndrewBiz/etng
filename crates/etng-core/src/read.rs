@@ -91,6 +91,7 @@ fn parse(data: &[u8], file_type: FileType, opts: &ReadOptions) -> ParseResult {
         FileType::Heic => parse_heic(data, opts),
         FileType::Png => parse_png(data, opts),
         FileType::Mov => parse_mov(data, opts),
+        FileType::Mts => parse_mts(data, opts),
         FileType::Unknown => (
             Vec::new(),
             Vec::new(),
@@ -344,6 +345,14 @@ fn parse_heic(data: &[u8], opts: &ReadOptions) -> ParseResult {
     push_aperture(&mut tags);
     push_composite(&mut tags, width, height);
     push_post_composites(&mut tags);
+    (tags, warnings, None)
+}
+
+fn parse_mts(data: &[u8], opts: &ReadOptions) -> ParseResult {
+    let mut tags = Vec::new();
+    let warnings = Vec::new();
+    crate::mts::parse(data, &mut tags);
+    let _ = opts;
     (tags, warnings, None)
 }
 

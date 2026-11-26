@@ -28,6 +28,7 @@ pub mod json;
 pub mod makernotes;
 pub mod model;
 pub mod mov;
+pub mod mts;
 pub mod options;
 pub mod png;
 pub mod read;

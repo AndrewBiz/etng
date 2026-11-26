@@ -104,7 +104,7 @@ etng -ver                              # версия совместимости
 | HEIC/HEIF | нативно: EXIF/XMP, `ftyp`/`hvcC`/`colr`/`ispe`/`irot`/`pixi`/`auxC`/`mdat` |
 | PNG | нативно: IHDR, eXIf, XMP в iTXt/tEXt, sRGB, tIME |
 | MOV | нативно: ftyp, mvhd (даты, длительность), mdat; треки/кодеки — нет |
-| MTS/M2TS | только через fallback |
+| MTS/M2TS | нативно: demux TS, H.264 SEI MDPM — дата, GPS |
 
 ## Ограничения
 
@@ -116,7 +116,8 @@ etng -ver                              # версия совместимости
   делегирует.
 - **ARW:** SubIFD и `PreviewImage` читаются; SR2SubIFD (зашифрован) и часть
   вложенных Sony-таблиц пока отсутствуют.
-- **MTS/M2TS** нативно не читаются; MOV — только заголовок и даты.
+- **MTS/M2TS** читаются дата и GPS; `M2TS:Duration`, кодеки и треки — нет.
+- **MOV** — только заголовок и даты, без треков и кодеков.
 - `CompatibleBrands` в HEIC/CR3 выводится строкой, а не JSON-массивом.
 - Подробный список осознанных расхождений — в [`docs/divergences.md`](docs/divergences.md).
 
