@@ -362,7 +362,7 @@ fn parse_subifds(data: &[u8], out: &mut Vec<Tag>, numeric: bool) {
     let Some(bytes) = tiff.entry_bytes(entry) else {
         return;
     };
-    let Some(offset) = bytes.chunks_exact(4).next().map(|chunk| {
+    let Some(offset) = bytes.as_chunks::<4>().0.first().map(|chunk| {
         if tiff.le {
             u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]])
         } else {

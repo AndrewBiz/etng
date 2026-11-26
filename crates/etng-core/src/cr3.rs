@@ -771,7 +771,7 @@ pub(crate) fn canon_tables(payload: &[u8], ifd_offset: u32, tags: &mut Vec<Tag>,
             )),
             0xaa => {
                 let mut values = Vec::new();
-                for chunk in bytes.chunks_exact(2).skip(1).take(4) {
+                for chunk in bytes.as_chunks::<2>().0.iter().skip(1).take(4) {
                     values.push(if tiff.le {
                         u16::from_le_bytes([chunk[0], chunk[1]])
                     } else {
@@ -904,7 +904,7 @@ fn af_info(bytes: &[u8], le: bool, legacy: bool, tags: &mut Vec<Tag>, numeric: b
     };
     let defs = tables().defs_in_table("Canon", table);
     let mut values = Vec::new();
-    for chunk in bytes.chunks_exact(2) {
+    for chunk in bytes.as_chunks::<2>().0 {
         values.push(if le {
             i16::from_le_bytes([chunk[0], chunk[1]])
         } else {
@@ -1059,7 +1059,7 @@ fn af_micro_adj(bytes: &[u8], le: bool, tags: &mut Vec<Tag>, numeric: bool) {
 
 fn canon_custom(bytes: &[u8], le: bool, tags: &mut Vec<Tag>, numeric: bool) {
     let mut values = Vec::new();
-    for chunk in bytes.chunks_exact(4) {
+    for chunk in bytes.as_chunks::<4>().0 {
         values.push(read_signed(chunk, le));
     }
     let mut index = 5usize;

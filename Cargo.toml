@@ -5,9 +5,9 @@ members = ["crates/etng-core", "crates/etng-cli", "crates/etng-tags", "xtask"]
 [workspace.package]
 version = "0.14.0"
 edition = "2024"
-rust-version = "1.92"
+rust-version = "1.100"
 license = "MIT"
-repository = "https://example.invalid/etng"
+repository = "https://github.com/AndrewBiz/etng"
 
 [workspace.dependencies]
 etng-core = { path = "crates/etng-core" }
@@ -16,7 +16,6 @@ kamadak-exif = "0.6.2"
 quick-xml = "0.38"
 rayon = "1.11"
 serde_json = "1.0"
-img-parts = "0.3"
 memmap2 = "0.9"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 glob = "0.3"

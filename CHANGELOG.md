@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.14.1 — 2026-11-26
+
+- Rust toolchain/MSRV обновлены до 1.100.0 (rust-toolchain.toml, CI).
+- Исправлены новые clippy-предупреждения 1.100 (`chunks_exact`/`as_chunks`,
+  collapsible if/match).
+- Удалены неиспользуемые workspace-зависимости `img-parts`, `rayon`.
+
 ## 0.14.0 — 2026-11-26
 
 ### Multi-value Keywords/Creator

@@ -137,7 +137,6 @@ dependencies = [
  "md-5",
  "memmap2",
  "quick-xml",
- "rayon",
  "serde_json",
 ]
 

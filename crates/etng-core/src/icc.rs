@@ -483,7 +483,9 @@ fn text_tag(profile: &[u8], offset: usize, size: usize) -> Option<String> {
             ]) as usize;
             let raw = tag.get(at..at + length)?;
             let units: Vec<u16> = raw
-                .chunks_exact(2)
+                .as_chunks::<2>()
+                .0
+                .iter()
                 .map(|pair| u16::from_be_bytes([pair[0], pair[1]]))
                 .collect();
             Some(

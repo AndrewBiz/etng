@@ -69,7 +69,7 @@ install -m755 target/release/etng ~/.local/bin/etng
 cargo install --path crates/etng-cli
 ```
 
-Требования: Rust 1.92+. Системный `exiftool` нужен только для fallback
+Требования: Rust 1.100+. Системный `exiftool` нужен только для fallback
 (делегирование неподдерживаемых форматов и полный JSON там, где нативный
 парсер ещё не покрывает всё).
 
