@@ -208,7 +208,7 @@ fn try_layout(
     tags
 }
 
-fn entry_value(tiff: &Tiff<'_>, entry: &Entry) -> Option<Value> {
+pub(crate) fn entry_value(tiff: &Tiff<'_>, entry: &Entry) -> Option<Value> {
     let bytes = tiff.entry_bytes(entry)?;
     match entry.typ {
         2 => {

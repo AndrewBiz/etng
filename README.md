@@ -100,7 +100,7 @@ etng -ver                              # версия совместимости
 | TIFF / DNG / NEF | нативно |
 | CR2 | нативно; EXIF/Canon MakerNotes/GPS, `PreviewImage` |
 | CR3 | нативно: ISO-BMFF, CMT1–CMT4, QuickTime/Track, `THMB`/`PRVW`; в `auto` JSON/CSV дополняются exiftool до полного Canon-набора |
-| ARW | детект и TIFF/Sony-основа; SubIFD и часть Sony-таблиц пока не читаются |
+| ARW | TIFF/Sony, SubIFD и `PreviewImage` (включая `-b`); SR2SubIFD и часть Sony-таблиц пока не читаются |
 | HEIC/HEIF | нативно: EXIF/XMP, `ftyp`/`hvcC`/`colr`/`ispe`/`irot`/`pixi`/`auxC`/`mdat` |
 | PNG, MOV, MTS | только через fallback |
 
@@ -111,7 +111,8 @@ etng -ver                              # версия совместимости
   поэтому в режиме `auto` JSON и CSV для CR3 заменяются выводом exiftool, чтобы
   не терять теги. `--fallback=never` показывает нативный набор, `-b` никогда не
   делегирует.
-- **ARW:** SubIFD-изображения и часть вложенных Sony-таблиц пока отсутствуют.
+- **ARW:** SubIFD и `PreviewImage` читаются; SR2SubIFD (зашифрован) и часть
+  вложенных Sony-таблиц пока отсутствуют.
 - **PNG и видео** (MOV/MTS) нативно не читаются.
 - `CompatibleBrands` в HEIC/CR3 выводится строкой, а не JSON-массивом.
 - Подробный список осознанных расхождений — в [`docs/divergences.md`](docs/divergences.md).

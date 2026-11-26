@@ -5,6 +5,7 @@ use exif::{Context, In, Value as ExifValue};
 
 use crate::makernotes;
 use crate::model::{Tag, Value};
+use crate::tiff::Tiff;
 
 /// Parse EXIF from a JPEG/TIFF container (or a raw TIFF payload).
 pub fn parse(
@@ -117,6 +118,14 @@ pub fn parse(
             }
         }
         out.push(tag);
+    }
+
+    parse_subifds(data, out, numeric);
+    if make
+        .as_deref()
+        .is_some_and(|text| text.to_ascii_uppercase().contains("SONY"))
+    {
+        sony_preview(data, out);
     }
 
     gps_prints(out);
@@ -337,6 +346,105 @@ fn gps_decimal(value: &ExifValue) -> Option<f64> {
     Some(degrees + minutes / 60.0 + seconds / 3600.0)
 }
 
+fn parse_subifds(data: &[u8], out: &mut Vec<Tag>, numeric: bool) {
+    let Some(tiff) = Tiff::new(data) else {
+        return;
+    };
+    let Some(ifd_offset) = tiff.first_ifd_offset() else {
+        return;
+    };
+    let Some(ifd) = tiff.read_ifd(ifd_offset) else {
+        return;
+    };
+    let Some(entry) = ifd.entries.iter().find(|entry| entry.tag == 0x014a) else {
+        return;
+    };
+    let Some(bytes) = tiff.entry_bytes(entry) else {
+        return;
+    };
+    let Some(offset) = bytes.chunks_exact(4).next().map(|chunk| {
+        if tiff.le {
+            u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]])
+        } else {
+            u32::from_be_bytes([chunk[0], chunk[1], chunk[2], chunk[3]])
+        }
+    }) else {
+        return;
+    };
+    let Some(sub) = tiff.read_ifd(offset) else {
+        return;
+    };
+    for entry in &sub.entries {
+        let id = entry.tag.to_string();
+        let Some(def) = tables().find_table_id("Exif::Main", &id) else {
+            continue;
+        };
+        let Some(value) = makernotes::entry_value(&tiff, entry) else {
+            continue;
+        };
+        if matches!(value, Value::Bytes(_)) {
+            continue;
+        }
+        let mut tag = Tag::new("EXIF", "SubIFD", def.name, value);
+        if !numeric && let Some(print) = def.print_value(&tag.value.display()) {
+            tag = tag.with_print(print);
+        }
+        out.push(tag);
+    }
+}
+
+fn sony_preview(data: &[u8], out: &mut Vec<Tag>) {
+    let Some(tiff) = Tiff::new(data) else {
+        return;
+    };
+    let Some(ifd) = tiff
+        .first_ifd_offset()
+        .and_then(|offset| tiff.read_ifd(offset))
+    else {
+        return;
+    };
+    let read_u32 = |tag: u16| {
+        ifd.entries
+            .iter()
+            .find(|entry| entry.tag == tag)
+            .and_then(|entry| tiff.entry_bytes(entry))
+            .and_then(|bytes| bytes.get(0..4))
+            .map(|bytes| u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
+    };
+    let (Some(start), Some(length)) = (read_u32(0x0201), read_u32(0x0202)) else {
+        return;
+    };
+    let start = start as usize;
+    let length = length as usize;
+    let Some(end) = start.checked_add(length) else {
+        return;
+    };
+    let Some(bytes) = data.get(start..end) else {
+        return;
+    };
+    if !bytes.starts_with(&[0xFF, 0xD8]) {
+        return;
+    }
+    out.push(Tag::new(
+        "EXIF",
+        "IFD0",
+        "PreviewImageStart",
+        Value::Int(start as i64),
+    ));
+    out.push(Tag::new(
+        "EXIF",
+        "IFD0",
+        "PreviewImageLength",
+        Value::Int(length as i64),
+    ));
+    out.push(Tag::new(
+        "EXIF",
+        "IFD0",
+        "PreviewImage",
+        Value::Bytes(bytes.to_vec()),
+    ));
+}
+
 fn to_value(value: &ExifValue, def: &etng_tags::TagDef) -> Option<Value> {
     Some(match value {
         ExifValue::Ascii(parts) => Value::Str(
@@ -448,5 +556,62 @@ fn floats(values: impl Iterator<Item = f64>) -> Value {
                 .collect::<Vec<_>>()
                 .join(" "),
         ),
+    }
+}
+
+#[cfg(test)]
+mod subifd_tests {
+    use super::*;
+
+    fn tiff_with_subifd() -> Vec<u8> {
+        let mut data = vec![0u8; 128];
+        data[0..4].copy_from_slice(b"II*\0");
+        data[4..8].copy_from_slice(&8u32.to_le_bytes());
+        data[8..10].copy_from_slice(&3u16.to_le_bytes());
+        let entry = |data: &mut [u8], at: usize, tag: u16, typ: u16, count: u32, value: u32| {
+            data[at..at + 2].copy_from_slice(&tag.to_le_bytes());
+            data[at + 2..at + 4].copy_from_slice(&typ.to_le_bytes());
+            data[at + 4..at + 8].copy_from_slice(&count.to_le_bytes());
+            data[at + 8..at + 12].copy_from_slice(&value.to_le_bytes());
+        };
+        entry(&mut data, 10, 0x014a, 4, 1, 64);
+        entry(&mut data, 22, 0x0201, 4, 1, 128);
+        entry(&mut data, 34, 0x0202, 4, 1, 4);
+        data[46..50].copy_from_slice(&0u32.to_le_bytes());
+
+        data[64..66].copy_from_slice(&2u16.to_le_bytes());
+        entry(&mut data, 66, 0x0100, 4, 1, 100);
+        entry(&mut data, 78, 0x0101, 4, 1, 50);
+        data[90..94].copy_from_slice(&0u32.to_le_bytes());
+
+        data.extend_from_slice(&[0xFF, 0xD8, 0xFF, 0xD9]);
+        data
+    }
+
+    #[test]
+    fn reads_subifd_dimensions() {
+        let data = tiff_with_subifd();
+        let mut tags = Vec::new();
+        parse_subifds(&data, &mut tags, false);
+        let width = tags.iter().find(|tag| tag.name == "ImageWidth").unwrap();
+        assert_eq!(width.value.display(), "100");
+        assert_eq!(width.group1, "SubIFD");
+    }
+
+    #[test]
+    fn extracts_sony_preview_bytes() {
+        let data = tiff_with_subifd();
+        let mut tags = Vec::new();
+        sony_preview(&data, &mut tags);
+        let preview = tags
+            .iter()
+            .find(|tag| tag.name == "PreviewImage")
+            .expect("preview");
+        assert!(matches!(
+            &preview.value,
+            Value::Bytes(bytes) if bytes == &[0xFF, 0xD8, 0xFF, 0xD9]
+        ));
+        assert!(tags.iter().any(|tag| tag.name == "PreviewImageStart"));
+        assert!(tags.iter().any(|tag| tag.name == "PreviewImageLength"));
     }
 }
