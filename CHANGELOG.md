@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.14.0 — 2026-11-26
+
+### Multi-value Keywords/Creator
+
+- Повторные `-Keywords=`/`-Creator=` собираются в список.
+- XMP `dc:subject` — `rdf:Bag`, `dc:creator` — `rdf:Seq`.
+- IPTC 2:25/2:80 — отдельная запись на значение.
+- EXIF Artist — значения через `; `.
+- 114 тестов.
+
 ## 0.13.0 — 2026-11-26
 
 ### MWG-теги

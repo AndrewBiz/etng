@@ -118,7 +118,7 @@ checksum = "0e9c71c2167ca323c882b99918929403426e2373ea17242ff5653e0d5e1058be"
 
 [[package]]
 name = "etng-cli"
-version = "0.13.0"
+version = "0.14.0"
 dependencies = [
  "etng-core",
  "etng-tags",
@@ -129,7 +129,7 @@ dependencies = [
 
 [[package]]
 name = "etng-core"
-version = "0.13.0"
+version = "0.14.0"
 dependencies = [
  "chrono",
  "etng-tags",
@@ -143,7 +143,7 @@ dependencies = [
 
 [[package]]
 name = "etng-tags"
-version = "0.13.0"
+version = "0.14.0"
 
 [[package]]
 name = "find-msvc-tools"
@@ -551,7 +551,7 @@ dependencies = [
 
 [[package]]
 name = "xtask"
-version = "0.13.0"
+version = "0.14.0"
 dependencies = [
  "etng-core",
  "quick-xml",
