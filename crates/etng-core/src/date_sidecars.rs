@@ -193,6 +193,8 @@ fn set_xmp_value(xml: &mut String, property: &str, value: &str) -> bool {
     let uri = match prefix {
         "photoshop" => PHOTOSHOP_NS,
         "xmp" => XMP_NS,
+        "dc" => DC_NS,
+        "Iptc4xmpCore" => IPTC_CORE_NS,
         _ => return false,
     };
     let description = format!(
@@ -432,6 +434,249 @@ fn iptc_time(value: &str, suffix: String) -> String {
         return format!("{digits}{suffix}");
     }
     format!("{digits}+0000")
+}
+
+const DC_NS: &str = "http://purl.org/dc/elements/1.1/";
+const IPTC_CORE_NS: &str = "http://iptc.org/std/Iptc4xmpCore/1.0/xmlns/";
+
+/// MWG text tags: XMP property, prefix, namespace, optional rdf container.
+fn text_xmp(
+    name: &str,
+) -> Option<(
+    &'static str,
+    &'static str,
+    &'static str,
+    Option<&'static str>,
+)> {
+    Some(match name {
+        "City" => ("photoshop:City", "photoshop", PHOTOSHOP_NS, None),
+        "Country" => ("photoshop:Country", "photoshop", PHOTOSHOP_NS, None),
+        "State" => ("photoshop:State", "photoshop", PHOTOSHOP_NS, None),
+        "Location" => ("Iptc4xmpCore:Location", "Iptc4xmpCore", IPTC_CORE_NS, None),
+        "Keywords" => ("dc:subject", "dc", DC_NS, Some("Bag")),
+        "Creator" => ("dc:creator", "dc", DC_NS, Some("Seq")),
+        "Copyright" => ("dc:rights", "dc", DC_NS, None),
+        _ => return None,
+    })
+}
+
+fn text_dataset(name: &str) -> Option<u8> {
+    Some(match name {
+        "Keywords" => 25,
+        "Creator" => 80,
+        "City" => 90,
+        "Location" => 92,
+        "State" => 95,
+        "Country" => 101,
+        "Copyright" => 116,
+        _ => return None,
+    })
+}
+
+pub fn update_text(data: &[u8], entries: &[(String, String)]) -> Result<Option<Vec<u8>>, String> {
+    if !data.starts_with(&[0xFF, 0xD8]) {
+        return Ok(None);
+    }
+    let mut out = data.to_vec();
+    let mut changed = false;
+    if let Some(next) = update_xmp_text(&out, entries)? {
+        out = next;
+        changed = true;
+    }
+    if let Some(next) = update_iptc_text(&out, entries)? {
+        out = next;
+        changed = true;
+    }
+    Ok(changed.then_some(out))
+}
+
+fn update_xmp_text(data: &[u8], entries: &[(String, String)]) -> Result<Option<Vec<u8>>, String> {
+    let Some((marker, length)) = find_segment(data, 0xE1, XMP_SIG) else {
+        return create_xmp_text(data, entries);
+    };
+    let payload = &data[marker + 2..marker + length];
+    let bytes = payload
+        .strip_prefix(XMP_SIG)
+        .ok_or_else(|| "invalid XMP segment".to_string())?;
+    let mut xml = String::from_utf8(bytes.to_vec())
+        .map_err(|_| "XMP packet is not valid UTF-8".to_string())?;
+    let mut changed = false;
+    for (name, value) in entries {
+        let Some((property, prefix, uri, container)) = text_xmp(name) else {
+            continue;
+        };
+        changed |= match container {
+            Some(kind) => set_xmp_array(&mut xml, property, prefix, uri, kind, value),
+            None => set_xmp_value(&mut xml, property, &escape_xml(value)),
+        };
+    }
+    if !changed {
+        return Ok(None);
+    }
+    let mut new_payload = XMP_SIG.to_vec();
+    new_payload.extend_from_slice(xml.as_bytes());
+    replace_segment(data, marker, length, &new_payload).map(Some)
+}
+
+fn create_xmp_text(data: &[u8], entries: &[(String, String)]) -> Result<Option<Vec<u8>>, String> {
+    let mut namespaces: Vec<(&str, &str)> = Vec::new();
+    let mut body = String::new();
+    for (name, value) in entries {
+        let Some((property, prefix, uri, container)) = text_xmp(name) else {
+            continue;
+        };
+        if !namespaces.iter().any(|(known, _)| *known == prefix) {
+            namespaces.push((prefix, uri));
+        }
+        body.push_str(&format!("   <{property}>"));
+        if let Some(kind) = container {
+            body.push_str(&format!(
+                "<rdf:{kind}><rdf:li>{}</rdf:li></rdf:{kind}>",
+                escape_xml(value)
+            ));
+        } else {
+            body.push_str(&escape_xml(value));
+        }
+        body.push_str(&format!("</{property}>\n"));
+    }
+    if body.is_empty() {
+        return Ok(None);
+    }
+    let declarations: String = namespaces
+        .iter()
+        .map(|(prefix, uri)| format!(" xmlns:{prefix}='{uri}'"))
+        .collect();
+    let xml = format!(
+        "<?xpacket begin='\u{feff}' id='W5M0MpCehiHzreSzNTczkc9d'?>\n\
+         <x:xmpmeta xmlns:x='adobe:ns:meta/'>\n\
+         <rdf:RDF xmlns:rdf='http://www.w3.org/1999/02/22-rdf-syntax-ns#'>\n\
+         <rdf:Description rdf:about=''{declarations}>\n\
+         {body}</rdf:Description>\n\
+         </rdf:RDF>\n\
+         </x:xmpmeta>\n\
+         <?xpacket end='w'?>"
+    );
+    let mut payload = XMP_SIG.to_vec();
+    payload.extend_from_slice(xml.as_bytes());
+    insert_segment(data, 2, 0xE1, &payload).map(Some)
+}
+
+fn set_xmp_array(
+    xml: &mut String,
+    property: &str,
+    prefix: &str,
+    uri: &str,
+    kind: &str,
+    value: &str,
+) -> bool {
+    let open = format!("<{property}");
+    if let Some(start) = xml.find(&open) {
+        let Some(tag_end) = xml[start..].find('>') else {
+            return false;
+        };
+        let content = start + tag_end + 1;
+        if let Some(close) = xml[content..].find(&format!("</{property}>")) {
+            let inner = format!(
+                "\n   <rdf:{kind}>\n    <rdf:li>{}</rdf:li>\n   </rdf:{kind}>\n  ",
+                escape_xml(value)
+            );
+            xml.replace_range(content..content + close, &inner);
+            return true;
+        }
+    }
+    add_xmp_property(
+        xml,
+        property,
+        &format!(
+            "\n   <rdf:{kind}>\n    <rdf:li>{}</rdf:li>\n   </rdf:{kind}>\n  ",
+            escape_xml(value)
+        ),
+        prefix,
+        uri,
+    )
+}
+
+fn add_xmp_property(
+    xml: &mut String,
+    property: &str,
+    content: &str,
+    prefix: &str,
+    uri: &str,
+) -> bool {
+    let namespace = format!("xmlns:{prefix}=");
+    let existing = xml.find(&namespace).and_then(|ns_pos| {
+        xml[ns_pos..]
+            .find("</rdf:Description>")
+            .map(|close| ns_pos + close)
+    });
+    if let Some(at) = existing {
+        xml.insert_str(at, &format!("\n  <{property}>{content}</{property}>\n "));
+        return true;
+    }
+    let Some(rdf_close) = xml.find("</rdf:RDF>") else {
+        return false;
+    };
+    let description = format!(
+        "\n <rdf:Description rdf:about='' xmlns:{prefix}='{uri}'>\n  <{property}>{content}</{property}>\n </rdf:Description>\n"
+    );
+    xml.insert_str(rdf_close, &description);
+    true
+}
+
+fn escape_xml(value: &str) -> String {
+    value
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+}
+
+fn update_iptc_text(data: &[u8], entries: &[(String, String)]) -> Result<Option<Vec<u8>>, String> {
+    if let Some((marker, length)) = find_segment(data, 0xED, PHOTOSHOP_SIG) {
+        let payload = &data[marker + 2..marker + length];
+        let block = payload
+            .strip_prefix(PHOTOSHOP_SIG)
+            .ok_or_else(|| "invalid Photoshop segment".to_string())?;
+        let existing =
+            find_iptc_resource(block).and_then(|(start, size)| block.get(start..start + size));
+        let Some((iim, changed)) = merge_text_iim(existing.unwrap_or_default(), entries) else {
+            return Ok(None);
+        };
+        if !changed {
+            return Ok(None);
+        }
+        let new_block = rebuild_block(block, &iim)?;
+        let mut new_payload = PHOTOSHOP_SIG.to_vec();
+        new_payload.extend_from_slice(&new_block);
+        return replace_segment(data, marker, length, &new_payload).map(Some);
+    }
+    let Some((iim, changed)) = merge_text_iim(&[], entries) else {
+        return Ok(None);
+    };
+    if !changed {
+        return Ok(None);
+    }
+    let mut payload = PHOTOSHOP_SIG.to_vec();
+    payload.extend_from_slice(&make_resource(&iim));
+    insert_segment(data, 2, 0xED, &payload).map(Some)
+}
+
+fn merge_text_iim(existing: &[u8], entries: &[(String, String)]) -> Option<(Vec<u8>, bool)> {
+    let mut records = parse_iim(existing);
+    let mut changed = false;
+    for (name, value) in entries {
+        let Some(dataset) = text_dataset(name) else {
+            continue;
+        };
+        if name == "Keywords" || name == "Creator" {
+            records.retain(|(record, current, _)| !(*record == 2 && *current == dataset));
+        }
+        changed |= set_record(&mut records, dataset, value.as_bytes().to_vec());
+    }
+    if !changed {
+        return None;
+    }
+    Some((build_iim(&records), true))
 }
 
 #[cfg(test)]

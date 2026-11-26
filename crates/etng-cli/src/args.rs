@@ -184,7 +184,8 @@ Options:
   --threads N      число потоков (по умолчанию — число ядер)
   --fallback MODE  auto|never|always (по умолчанию auto)
   -TAG=VALUE       записать дату: DateTimeOriginal, CreateDate, ModifyDate,
-                   FileModifyDate или AllDates
+                   FileModifyDate, AllDates; MWG: City, Country, State,
+                   Location, Keywords, Creator, Copyright
   -ver             версия совместимости с exiftool
   -h, --help       эта справка
 

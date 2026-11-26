@@ -91,7 +91,7 @@ etng -j -b -ThumbnailImage photo.jpg   # base64 в JSON
 etng -j -x ThumbnailImage photo.jpg    # исключить тег
 etng -ver                              # версия совместимости
 
-# Запись дат (JPEG/TIFF)
+# Запись метаданных (JPEG/TIFF)
 etng -DateTimeOriginal='2024:05:06 07:08:09' photo.jpg
 etng -AllDates='2024:05:06 07:08:09' -FileModifyDate='2024:05:06 07:08:09' photo.jpg
 ```
@@ -115,9 +115,10 @@ etng -AllDates='2024:05:06 07:08:09' -FileModifyDate='2024:05:06 07:08:09' photo
 
 ## Ограничения
 
-- **Запись:** только даты и только JPEG/TIFF; HEIC/CR3/MOV не поддержаны.
-  Все три EXIF-даты перезаписываются и вставляются при отсутствии; XMP/IPTC
-  обновляются, а при отсутствии пакетов создаются минимальные.
+- **Запись:** JPEG/TIFF; HEIC/CR3/MOV не поддержаны. Даты и MWG-текстовые
+  теги перезаписываются/вставляются; XMP/IPTC при отсутствии создаются
+  минимальные. `Keywords`/`Creator` при записи заменяют список одним значением
+  (для нескольких значений нужен отдельный change).
 - **CR3 / Canon:** ColorData для JPEG/CR2 (версии 32/33/34/48/64/65), CTMD
   Track4, FilterInfo, FocusBracketing и LevelInfo уже читаются; полный
   CanonCustom и сложные Composite ещё не разобраны,
@@ -133,12 +134,11 @@ etng -AllDates='2024:05:06 07:08:09' -FileModifyDate='2024:05:06 07:08:09' photo
 
 ## Запись дат
 
-Пишет существующие даты и вставляет отсутствующие `DateTimeOriginal` и
-`CreateDate` в ExifIFD, а `ModifyDate` — в IFD0 (JPEG/TIFF). `AllDates`
-разворачивается в три тега. Для JPEG также обновляются XMP-поля
-(`photoshop:DateCreated`, `xmp:CreateDate`, `xmp:ModifyDate`) и IPTC IIM
-(`DateCreated`/`TimeCreated`, `DigitalCreationDate`/`DigitalCreationTime`).
-Отсутствующие XMP/IPTC-пакеты создаются с нужными датами. Замена атомарная (temp + rename), права файла
+Пишет даты и MWG-текстовые теги. `DateTimeOriginal`/`CreateDate` вставляются в
+ExifIFD, `ModifyDate` — в IFD0; `AllDates` разворачивается в три тега. Для JPEG
+обновляются/создаются XMP и IPTC-пакеты. MWG-теги: `City`, `Country`, `State`,
+`Location`, `Keywords`, `Creator`, `Copyright` — пишутся в XMP/IPTC, а
+`Creator`/`Copyright` также в EXIF `Artist`/`Copyright`. Замена атомарная (temp + rename), права файла
 сохраняются.
 
 Поддерживаемые цели: `DateTimeOriginal`, `CreateDate`, `ModifyDate`,

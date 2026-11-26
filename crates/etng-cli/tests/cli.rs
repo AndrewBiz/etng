@@ -1035,3 +1035,72 @@ fn creates_xmp_and_iptc_dates_when_absent() {
     assert_eq!(json[0]["IPTC:TimeCreated"], "070809+0000");
     assert_eq!(json[0]["IPTC:DigitalCreationDate"], 20240506);
 }
+
+#[test]
+fn writes_mwg_text_tags() {
+    let dir = temp_dir("mwg-text");
+    fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("tags.jpg");
+    fs::copy(corpus("phtools/dates/7filemodifydate.JPG"), &path).unwrap();
+
+    let output = Command::new(bin())
+        .args([
+            "-City=Moscow",
+            "-Country=Russia",
+            "-State=Moscow",
+            "-Location=Fenino",
+            "-Keywords=test",
+            "-Creator=ANB",
+            "-Copyright=(c) ANB",
+            path.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let read = Command::new(bin())
+        .args([
+            "-j",
+            "-G1",
+            "-XMP-photoshop:City",
+            "-XMP-photoshop:Country",
+            "-XMP-photoshop:State",
+            "-XMP-iptcCore:Location",
+            "-XMP-dc:Subject",
+            "-XMP-dc:Creator",
+            "-XMP-dc:Rights",
+            "-IPTC:City",
+            "-IPTC:Country-PrimaryLocationName",
+            "-IPTC:Province-State",
+            "-IPTC:Sub-location",
+            "-IPTC:Keywords",
+            "-IPTC:By-line",
+            "-IPTC:CopyrightNotice",
+            "-IFD0:Artist",
+            "-IFD0:Copyright",
+            path.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&read.stdout).unwrap();
+    assert_eq!(json[0]["XMP-photoshop:City"], "Moscow");
+    assert_eq!(json[0]["XMP-photoshop:Country"], "Russia");
+    assert_eq!(json[0]["XMP-photoshop:State"], "Moscow");
+    assert_eq!(json[0]["XMP-iptcCore:Location"], "Fenino");
+    assert_eq!(json[0]["XMP-dc:Subject"], "test");
+    assert_eq!(json[0]["XMP-dc:Creator"], "ANB");
+    assert_eq!(json[0]["XMP-dc:Rights"], "(c) ANB");
+    assert_eq!(json[0]["IPTC:City"], "Moscow");
+    assert_eq!(json[0]["IPTC:Country-PrimaryLocationName"], "Russia");
+    assert_eq!(json[0]["IPTC:Province-State"], "Moscow");
+    assert_eq!(json[0]["IPTC:Sub-location"], "Fenino");
+    assert_eq!(json[0]["IPTC:Keywords"], "test");
+    assert_eq!(json[0]["IPTC:By-line"], "ANB");
+    assert_eq!(json[0]["IPTC:CopyrightNotice"], "(c) ANB");
+    assert_eq!(json[0]["IFD0:Artist"], "ANB");
+    assert_eq!(json[0]["IFD0:Copyright"], "(c) ANB");
+}
