@@ -56,7 +56,9 @@ tag parity.
   binary tables are not decoded yet.
 - **PNG** reads IHDR, eXIf, iTXt/tEXt XMP, sRGB and tIME natively.
 - **MOV** reads ftyp and the movie header (dates, duration, mdat); tracks and
-  codec tables are not covered. MTS/M2TS remains fallback-only.
+  codec tables are not covered.
+- **MTS/M2TS** is demuxed natively; H.264 SEI MDPM supplies date/time and GPS.
+  `M2TS:Duration`, codecs and tracks are not covered yet.
 - **DNG/NEF/CR2 detection** uses the file extension to disambiguate TIFF-family
   containers when the signature alone is ambiguous (exiftool does the same for
   extension-based TIFF variants). CR2 preview tags (273/279) are re-interpreted

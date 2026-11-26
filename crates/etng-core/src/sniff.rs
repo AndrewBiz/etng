@@ -14,6 +14,7 @@ pub enum FileType {
     Heic,
     Png,
     Mov,
+    Mts,
     Unknown,
 }
 
@@ -30,6 +31,7 @@ impl FileType {
             FileType::Heic => "HEIC",
             FileType::Png => "PNG",
             FileType::Mov => "MOV",
+            FileType::Mts => "MTS",
             FileType::Unknown => "Unknown",
         }
     }
@@ -46,6 +48,7 @@ impl FileType {
             FileType::Heic => "heic",
             FileType::Png => "png",
             FileType::Mov => "mov",
+            FileType::Mts => "mts",
             FileType::Unknown => "",
         }
     }
@@ -62,6 +65,7 @@ impl FileType {
             FileType::Heic => "image/heic",
             FileType::Png => "image/png",
             FileType::Mov => "video/quicktime",
+            FileType::Mts => "video/mp2t",
             FileType::Unknown => "application/octet-stream",
         }
     }
@@ -87,6 +91,13 @@ pub fn detect_with_hint(data: &[u8], extension: Option<&str>) -> FileType {
     }
     if data.starts_with(&[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A]) {
         return FileType::Png;
+    }
+    let mts_extension = extension.is_some_and(|ext| matches!(ext, "mts" | "m2ts" | "ts"));
+    if (data.get(4) == Some(&0x47) && data.get(196) == Some(&0x47))
+        || (data.first() == Some(&0x47) && data.get(188) == Some(&0x47))
+        || (mts_extension && data.first() == Some(&0x47))
+    {
+        return FileType::Mts;
     }
     if data.len() >= 16 && &data[4..8] == b"ftyp" {
         let brand = &data[8..12];
