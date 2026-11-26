@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.13.0 — 2026-11-26
+
+### MWG-теги
+
+- `City`, `Country`, `State`, `Location`, `Keywords`, `Creator`, `Copyright`.
+- XMP: photoshop City/Country/State, Iptc4xmpCore Location, dc subject/creator/
+  rights.
+- IPTC: 2:90/2:95/2:101/2:92/2:25/2:80/2:116.
+- EXIF Artist/Copyright: обновление и append-only вставка.
+- Создание XMP/IPTC при отсутствии.
+- 113 тестов.
+
 ## 0.12.0 — 2026-11-26
 
 ### Создание XMP/IPTC
