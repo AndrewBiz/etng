@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.3.0 — 2026-11-26
+
+### Sony ARW
+
+- SubIFD (первый): размеры RAW, CFA, коррекции, strip-параметры — 24 тега.
+- `IFD0:PreviewImageStart/Length/PreviewImage`; `-b -PreviewImage` совпадает
+  с exiftool побайтово.
+- SR2SubIFD (зашифрован) и часть Sony binary tables пока не читаются.
+
+### Проверки
+
+- 90 тестов, clippy/fmt чистые, `xtask compare` — 16 файлов, 0 расхождений.
+
 ## 0.2.0 — 2026-11-26
 
 ### Canon
