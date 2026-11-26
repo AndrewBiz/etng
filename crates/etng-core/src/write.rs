@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 
 use chrono::{Local, NaiveDateTime, TimeZone};
 
+use crate::date_sidecars;
 use crate::tiff::Tiff;
 
 pub const WRITABLE: [&str; 4] = [
@@ -60,12 +61,16 @@ pub fn write(path: &Path, assignments: &[(String, String)]) -> Result<usize, Str
         let data = fs::read(path).map_err(|err| format!("{}: {err}", path.display()))?;
         let mut patched = data.clone();
         match apply_exif(&mut patched, &exif_updates) {
-            Ok(()) => atomic_replace(path, &patched)?,
+            Ok(()) => {}
             Err(err) if err.contains("not found") => {
-                insert_dates(path, &exif_updates)?;
+                patched = insert_dates(&patched, &exif_updates)?;
             }
             Err(err) => return Err(err),
         }
+        if let Some(updated) = date_sidecars::update(&patched, &exif_updates)? {
+            patched = updated;
+        }
+        atomic_replace(path, &patched)?;
         written += exif_updates.len();
     }
     if let Some(value) = file_modify {
@@ -75,9 +80,8 @@ pub fn write(path: &Path, assignments: &[(String, String)]) -> Result<usize, Str
     Ok(written)
 }
 
-fn insert_dates(path: &Path, updates: &[(String, String)]) -> Result<(), String> {
-    let data = fs::read(path).map_err(|err| format!("{}: {err}", path.display()))?;
-    let mut patched = data.clone();
+fn insert_dates(data: &[u8], updates: &[(String, String)]) -> Result<Vec<u8>, String> {
+    let mut patched = data.to_vec();
     let exif_updates: Vec<(String, String)> = updates
         .iter()
         .filter(|(name, _)| name == "DateTimeOriginal" || name == "CreateDate")
@@ -93,7 +97,7 @@ fn insert_dates(path: &Path, updates: &[(String, String)]) -> Result<(), String>
     if let Some((_, value)) = updates.iter().find(|(name, _)| name == "ModifyDate") {
         patched = set_modify_date(&patched, value)?;
     }
-    atomic_replace(path, &patched)
+    Ok(patched)
 }
 
 fn set_modify_date(data: &[u8], value: &str) -> Result<Vec<u8>, String> {
