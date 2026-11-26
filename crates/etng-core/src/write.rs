@@ -59,8 +59,13 @@ pub fn write(path: &Path, assignments: &[(String, String)]) -> Result<usize, Str
     if !exif_updates.is_empty() {
         let data = fs::read(path).map_err(|err| format!("{}: {err}", path.display()))?;
         let mut patched = data.clone();
-        apply_exif(&mut patched, &exif_updates)?;
-        atomic_replace(path, &patched)?;
+        match apply_exif(&mut patched, &exif_updates) {
+            Ok(()) => atomic_replace(path, &patched)?,
+            Err(err) if err.contains("not found") => {
+                insert_dates(path, &exif_updates)?;
+            }
+            Err(err) => return Err(err),
+        }
         written += exif_updates.len();
     }
     if let Some(value) = file_modify {
@@ -68,6 +73,146 @@ pub fn write(path: &Path, assignments: &[(String, String)]) -> Result<usize, Str
         written += 1;
     }
     Ok(written)
+}
+
+fn insert_dates(path: &Path, updates: &[(String, String)]) -> Result<(), String> {
+    let data = fs::read(path).map_err(|err| format!("{}: {err}", path.display()))?;
+    let patched = insert_exif_dates(&data, updates)?;
+    atomic_replace(path, &patched)
+}
+
+fn insert_exif_dates(data: &[u8], updates: &[(String, String)]) -> Result<Vec<u8>, String> {
+    let Some(bounds) = exif_bounds(data) else {
+        return Err("no EXIF/TIFF payload found".to_string());
+    };
+    let tiff = Tiff::at(data, bounds.base).ok_or_else(|| "invalid TIFF header".to_string())?;
+    let ifd0 = tiff
+        .first_ifd_offset()
+        .and_then(|offset| tiff.read_ifd(offset))
+        .ok_or_else(|| "cannot read IFD0".to_string())?;
+    let pointer = ifd0
+        .entries
+        .iter()
+        .find(|entry| entry.tag == 0x8769)
+        .ok_or_else(|| "ExifIFD pointer not found".to_string())?;
+    let exif_ifd = tiff
+        .read_ifd(pointer.value_or_offset)
+        .ok_or_else(|| "cannot read ExifIFD".to_string())?;
+    let mut entries = Vec::new();
+    for entry in &exif_ifd.entries {
+        let start = entry.entry_offset;
+        let raw = data
+            .get(start..start + 12)
+            .ok_or_else(|| "ExifIFD entry outside file".to_string())?;
+        entries.push((entry.tag, raw.to_vec()));
+    }
+    let mut added = Vec::new();
+    for (name, value) in updates {
+        let tag = match name.as_str() {
+            "DateTimeOriginal" => 0x9003,
+            "CreateDate" => 0x9004,
+            "ModifyDate" => {
+                return Err("ModifyDate insertion is not supported; tag is missing".to_string());
+            }
+            other => return Err(format!("unsupported insertion tag: {other}")),
+        };
+        if entries.iter().any(|(existing, _)| *existing == tag) {
+            continue;
+        }
+        added.push((tag, value.clone()));
+    }
+    if added.is_empty() {
+        return Err("no missing ExifIFD dates to insert".to_string());
+    }
+    let mut tiff_data = data[bounds.base..bounds.end].to_vec();
+    for (name, value) in updates {
+        let tag = match name.as_str() {
+            "DateTimeOriginal" => 0x9003,
+            "CreateDate" => 0x9004,
+            "ModifyDate" => 0x0132,
+            _ => continue,
+        };
+        if let Some(entry) = exif_ifd.entries.iter().find(|entry| entry.tag == tag) {
+            let start = if entry.count <= 4 {
+                entry.entry_offset.saturating_sub(bounds.base) + 8
+            } else {
+                entry.value_or_offset as usize
+            };
+            if start + 19 <= tiff_data.len() {
+                tiff_data[start..start + 19].copy_from_slice(value.as_bytes());
+                tiff_data[start + 19] = 0;
+            }
+        }
+    }
+    let aligned = tiff_data.len() + (tiff_data.len() & 1);
+    let count = entries.len() + added.len();
+    let values_start = aligned + 2 + count * 12 + 4;
+    let mut appended = vec![0u8; values_start + added.len() * 20 - aligned];
+    let write_u16 = |buffer: &mut [u8], at: usize, value: u16, le: bool| {
+        let raw = if le {
+            value.to_le_bytes()
+        } else {
+            value.to_be_bytes()
+        };
+        buffer[at..at + 2].copy_from_slice(&raw);
+    };
+    let write_u32 = |buffer: &mut [u8], at: usize, value: u32, le: bool| {
+        let raw = if le {
+            value.to_le_bytes()
+        } else {
+            value.to_be_bytes()
+        };
+        buffer[at..at + 4].copy_from_slice(&raw);
+    };
+    write_u16(&mut appended, 0, count as u16, tiff.le);
+    let mut all: Vec<(u16, Vec<u8>)> = entries;
+    for (index, (tag, value)) in added.iter().enumerate() {
+        let offset = values_start + index * 20;
+        let mut entry = vec![0u8; 12];
+        write_u16(&mut entry, 0, *tag, tiff.le);
+        write_u16(&mut entry, 2, 2, tiff.le);
+        write_u32(&mut entry, 4, 20, tiff.le);
+        write_u32(&mut entry, 8, offset as u32, tiff.le);
+        let string_at = values_start + index * 20 - aligned;
+        appended[string_at..string_at + 19].copy_from_slice(value.as_bytes());
+        all.push((*tag, entry));
+    }
+    all.sort_by_key(|(tag, _)| *tag);
+    for (index, (_, entry)) in all.iter().enumerate() {
+        let at = 2 + index * 12;
+        appended[at..at + 12].copy_from_slice(entry);
+    }
+    let next_at = 2 + count * 12;
+    write_u32(&mut appended, next_at, exif_ifd.next, tiff.le);
+
+    let new_offset = aligned as u32;
+    tiff_data.resize(aligned, 0);
+    tiff_data.extend_from_slice(&appended);
+    let pointer_at = pointer.entry_offset.saturating_sub(bounds.base) + 8;
+    if pointer_at + 4 > tiff_data.len() {
+        return Err("ExifIFD pointer outside TIFF".to_string());
+    }
+    let raw = if tiff.le {
+        new_offset.to_le_bytes()
+    } else {
+        new_offset.to_be_bytes()
+    };
+    tiff_data[pointer_at..pointer_at + 4].copy_from_slice(&raw);
+
+    if let Some((marker, length)) = bounds.segment {
+        let new_length = 2 + 6 + tiff_data.len();
+        if new_length > u16::MAX as usize {
+            return Err("EXIF segment too large after insertion".to_string());
+        }
+        let mut out = Vec::with_capacity(data.len() + appended.len());
+        out.extend_from_slice(&data[..marker + 2]);
+        out.extend_from_slice(&(new_length as u16).to_be_bytes());
+        out.extend_from_slice(b"Exif\0\0");
+        out.extend_from_slice(&tiff_data);
+        out.extend_from_slice(&data[marker + 2 + length..]);
+        return Ok(out);
+    }
+    Ok(tiff_data)
 }
 
 fn title_case(name: &str) -> String {
@@ -113,7 +258,7 @@ fn apply_exif(data: &mut [u8], updates: &[(String, String)]) -> Result<(), Strin
             return Err(format!("{name} is not a writable ASCII date"));
         }
         let start = if entry.count <= 4 {
-            base + entry.entry_offset + 8
+            entry.entry_offset + 8
         } else {
             base + entry.value_or_offset as usize
         };
@@ -125,6 +270,51 @@ fn apply_exif(data: &mut [u8], updates: &[(String, String)]) -> Result<(), Strin
         data[end] = 0;
     }
     Ok(())
+}
+
+struct Bounds {
+    base: usize,
+    end: usize,
+    segment: Option<(usize, usize)>,
+}
+
+fn exif_bounds(data: &[u8]) -> Option<Bounds> {
+    if data.starts_with(b"II*\0") || data.starts_with(b"MM\0*") {
+        return Some(Bounds {
+            base: 0,
+            end: data.len(),
+            segment: None,
+        });
+    }
+    if !data.starts_with(&[0xFF, 0xD8]) {
+        return None;
+    }
+    let mut pos = 2usize;
+    while pos + 4 <= data.len() {
+        if data[pos] != 0xFF {
+            pos += 1;
+            continue;
+        }
+        let marker = data[pos + 1];
+        if matches!(marker, 0xD8 | 0xD9 | 0x01 | 0xD0..=0xD7) {
+            pos += 2;
+            continue;
+        }
+        let length = u16::from_be_bytes([data[pos + 2], data[pos + 3]]) as usize;
+        if length < 2 || pos + 2 + length > data.len() {
+            break;
+        }
+        let payload = &data[pos + 4..pos + 2 + length];
+        if marker == 0xE1 && payload.starts_with(b"Exif\0\0") {
+            return Some(Bounds {
+                base: pos + 10,
+                end: pos + 2 + length,
+                segment: Some((pos, length)),
+            });
+        }
+        pos += 2 + length;
+    }
+    None
 }
 
 fn exif_base(data: &[u8]) -> Option<usize> {

@@ -272,6 +272,9 @@ fn corpus_files(root: &Path) -> Result<Vec<PathBuf>, Box<dyn Error>> {
         for entry in fs::read_dir(&dir)? {
             let path = entry?.path();
             if path.is_dir() {
+                if path.file_name().and_then(|name| name.to_str()) == Some("phtools") {
+                    continue;
+                }
                 stack.push(path);
                 continue;
             }
