@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.15.0 — 2026-11-26
+
+### HEIC/CR3/MOV write
+
+- HEIC: существующие EXIF-даты обновляются in-place.
+- CR3: CMT2 (DTO/CreateDate), CMT1 (ModifyDate), mvhd.
+- MOV: mvhd CreateDate/ModifyDate (UTC).
+- Вставка отсутствующих дат в BMFF пока не поддержана.
+- 117 тестов.
+
 ## 0.14.1 — 2026-11-26
 
 - Rust toolchain/MSRV обновлены до 1.100.0 (rust-toolchain.toml, CI).
