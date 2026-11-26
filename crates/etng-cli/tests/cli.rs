@@ -1148,3 +1148,132 @@ fn writes_multi_value_keywords_and_creator() {
     assert_eq!(json[0]["IPTC:By-line"], "Alice, Bob");
     assert_eq!(json[0]["IFD0:Artist"], "Alice; Bob");
 }
+
+#[test]
+fn writes_heic_exif_date() {
+    let dir = temp_dir("heic-write");
+    fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("photo.heic");
+    fs::copy(corpus("real/exif.heic"), &path).unwrap();
+
+    let output = Command::new(bin())
+        .args([
+            "-DateTimeOriginal=2024:05:06 07:08:09",
+            path.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let read = Command::new(bin())
+        .args(["-j", "-G1", "-DateTimeOriginal", path.to_str().unwrap()])
+        .output()
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&read.stdout).unwrap();
+    assert_eq!(json[0]["ExifIFD:DateTimeOriginal"], "2024:05:06 07:08:09");
+}
+
+#[test]
+fn writes_cr3_exif_and_quicktime_dates() {
+    let dir = temp_dir("cr3-write");
+    fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("photo.cr3");
+    fs::copy(corpus("real/canon-r6.cr3"), &path).unwrap();
+
+    let output = Command::new(bin())
+        .args([
+            "-DateTimeOriginal=2024:05:06 07:08:09",
+            "-CreateDate=2024:05:06 07:08:09",
+            "-ModifyDate=2024:05:06 07:08:09",
+            path.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let read = Command::new(bin())
+        .args([
+            "-j",
+            "-G1",
+            "-ExifIFD:DateTimeOriginal",
+            "-ExifIFD:CreateDate",
+            "-IFD0:ModifyDate",
+            "-QuickTime:CreateDate",
+            "-QuickTime:ModifyDate",
+            path.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&read.stdout).unwrap();
+    assert_eq!(json[0]["ExifIFD:DateTimeOriginal"], "2024:05:06 07:08:09");
+    assert_eq!(json[0]["ExifIFD:CreateDate"], "2024:05:06 07:08:09");
+    assert_eq!(json[0]["IFD0:ModifyDate"], "2024:05:06 07:08:09");
+    assert_eq!(json[0]["QuickTime:CreateDate"], "2024:05:06 07:08:09+03:00");
+    assert_eq!(json[0]["QuickTime:ModifyDate"], "2024:05:06 07:08:09+03:00");
+}
+
+fn minimal_mov() -> Vec<u8> {
+    fn atom(kind: &[u8; 4], payload: &[u8]) -> Vec<u8> {
+        let mut out = (payload.len() as u32 + 8).to_be_bytes().to_vec();
+        out.extend_from_slice(kind);
+        out.extend_from_slice(payload);
+        out
+    }
+    let mut ftyp = b"qt  ".to_vec();
+    ftyp.extend_from_slice(&0u32.to_be_bytes());
+    ftyp.extend_from_slice(b"qt  ");
+    let mut mvhd = vec![0u8; 100];
+    mvhd[0] = 0;
+    mvhd[12..16].copy_from_slice(&1000u32.to_be_bytes());
+    mvhd[16..20].copy_from_slice(&1000u32.to_be_bytes());
+    let moov = atom(b"moov", &atom(b"mvhd", &mvhd));
+    let mut out = atom(b"ftyp", &ftyp);
+    out.extend_from_slice(&moov);
+    out
+}
+
+#[test]
+fn writes_mov_header_dates() {
+    use std::io::Write;
+    let dir = temp_dir("mov-write");
+    fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("clip.mov");
+    let mut file = fs::File::create(&path).unwrap();
+    file.write_all(&minimal_mov()).unwrap();
+
+    let output = Command::new(bin())
+        .args([
+            "-CreateDate=2024:05:06 07:08:09",
+            "-ModifyDate=2024:05:06 07:08:09",
+            path.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let read = Command::new(bin())
+        .args([
+            "-j",
+            "-G1",
+            "-CreateDate",
+            "-ModifyDate",
+            path.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&read.stdout).unwrap();
+    assert_eq!(json[0]["QuickTime:CreateDate"], "2024:05:06 07:08:09");
+    assert_eq!(json[0]["QuickTime:ModifyDate"], "2024:05:06 07:08:09");
+}

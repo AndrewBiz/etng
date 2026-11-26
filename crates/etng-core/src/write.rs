@@ -9,7 +9,9 @@ use std::path::{Path, PathBuf};
 use chrono::{Local, NaiveDateTime, TimeZone};
 
 use crate::date_sidecars;
+use crate::sniff::{self, FileType};
 use crate::tiff::Tiff;
+use crate::{cr3, heic};
 
 pub const WRITABLE: [&str; 4] = [
     "DATETIMEORIGINAL",
@@ -80,19 +82,47 @@ pub fn write(path: &Path, assignments: &[(String, String)]) -> Result<usize, Str
     let mut written = 0usize;
     if !exif_updates.is_empty() {
         let data = fs::read(path).map_err(|err| format!("{}: {err}", path.display()))?;
-        let mut patched = data.clone();
-        match apply_exif(&mut patched, &exif_updates) {
-            Ok(()) => {}
-            Err(err) if err.contains("not found") => {
-                patched = insert_dates(&patched, &exif_updates)?;
+        let kind = sniff::detect(&data);
+        if matches!(kind, FileType::Heic | FileType::Cr3 | FileType::Mov) {
+            if !text_updates.is_empty() {
+                return Err(format!(
+                    "{}: text tags are not supported for {} yet",
+                    path.display(),
+                    kind.name()
+                ));
             }
-            Err(err) => return Err(err),
+            let patched = patch_bmff_dates(&data, &exif_updates)?;
+            atomic_replace(path, &patched)?;
+            written += exif_updates.len();
+        } else if matches!(
+            kind,
+            FileType::Jpeg
+                | FileType::Tiff
+                | FileType::Dng
+                | FileType::Cr2
+                | FileType::Arw
+                | FileType::Nef
+        ) {
+            let mut patched = data.clone();
+            match apply_exif(&mut patched, &exif_updates) {
+                Ok(()) => {}
+                Err(err) if err.contains("not found") => {
+                    patched = insert_dates(&patched, &exif_updates)?;
+                }
+                Err(err) => return Err(err),
+            }
+            if let Some(updated) = date_sidecars::update(&patched, &exif_updates)? {
+                patched = updated;
+            }
+            atomic_replace(path, &patched)?;
+            written += exif_updates.len();
+        } else {
+            return Err(format!(
+                "{}: date writing is not supported for {}",
+                path.display(),
+                kind.name()
+            ));
         }
-        if let Some(updated) = date_sidecars::update(&patched, &exif_updates)? {
-            patched = updated;
-        }
-        atomic_replace(path, &patched)?;
-        written += exif_updates.len();
     }
     if !text_updates.is_empty() {
         let data = fs::read(path).map_err(|err| format!("{}: {err}", path.display()))?;
@@ -109,6 +139,137 @@ pub fn write(path: &Path, assignments: &[(String, String)]) -> Result<usize, Str
         written += 1;
     }
     Ok(written)
+}
+
+fn patch_bmff_dates(data: &[u8], updates: &[(String, String)]) -> Result<Vec<u8>, String> {
+    let kind = sniff::detect(data);
+    let mut out = data.to_vec();
+    if matches!(kind, FileType::Heic | FileType::Cr3) {
+        let payloads: Vec<&[u8]> = match kind {
+            FileType::Heic => heic::extract_exif(data).into_iter().collect(),
+            FileType::Cr3 => cr3::exif_payloads(data),
+            _ => Vec::new(),
+        };
+        if payloads.is_empty() {
+            return Err(format!("{}: EXIF payload not found", kind.name()));
+        }
+        let ranges: Vec<(usize, usize)> = payloads
+            .iter()
+            .map(|payload| {
+                (
+                    payload.as_ptr() as usize - data.as_ptr() as usize,
+                    payload.len(),
+                )
+            })
+            .collect();
+        for (name, value) in updates {
+            let mut applied = false;
+            for (offset, length) in &ranges {
+                let mut tiff = out[*offset..*offset + *length].to_vec();
+                if apply_exif(&mut tiff, &[(name.clone(), value.clone())]).is_ok() {
+                    out[*offset..*offset + *length].copy_from_slice(&tiff);
+                    applied = true;
+                    break;
+                }
+            }
+            if !applied {
+                return Err(format!("{}: {name} tag not found in EXIF", kind.name()));
+            }
+        }
+    }
+    if matches!(kind, FileType::Cr3 | FileType::Mov) {
+        patch_movie_header_dates(&mut out, updates, kind == FileType::Cr3)?;
+    }
+    Ok(out)
+}
+
+fn patch_movie_header_dates(
+    data: &mut [u8],
+    updates: &[(String, String)],
+    local_time: bool,
+) -> Result<(), String> {
+    let Some((moov_start, moov_size, moov_header)) = find_box(data, b"moov") else {
+        return Ok(());
+    };
+    let moov_payload = &data[moov_start + moov_header..moov_start + moov_size];
+    let Some((mvhd_start, mvhd_size, mvhd_header)) = find_box(moov_payload, b"mvhd") else {
+        return Ok(());
+    };
+    let mvhd = moov_start + moov_header + mvhd_start + mvhd_header;
+    let mvhd_end = moov_start + moov_header + mvhd_start + mvhd_size;
+    if mvhd_end > data.len() || mvhd + 1 > data.len() {
+        return Err("invalid mvhd box".to_string());
+    }
+    let version = data[mvhd];
+    for (name, value) in updates {
+        let field = match name.as_str() {
+            "DateTimeOriginal" | "CreateDate" => 0,
+            "ModifyDate" => 1,
+            _ => continue,
+        };
+        let seconds = qt_seconds(value, local_time)?;
+        if version == 1 {
+            let at = mvhd + 4 + field * 8;
+            if at + 8 > mvhd_end {
+                return Err("invalid version-1 mvhd dates".to_string());
+            }
+            data[at..at + 8].copy_from_slice(&seconds.to_be_bytes());
+        } else {
+            let at = mvhd + 4 + field * 4;
+            if at + 4 > mvhd_end {
+                return Err("invalid version-0 mvhd dates".to_string());
+            }
+            let seconds = u32::try_from(seconds).map_err(|_| "date is out of range".to_string())?;
+            data[at..at + 4].copy_from_slice(&seconds.to_be_bytes());
+        }
+    }
+    Ok(())
+}
+
+fn qt_seconds(value: &str, local_time: bool) -> Result<u64, String> {
+    let date = NaiveDateTime::parse_from_str(value, "%Y:%m:%d %H:%M:%S")
+        .map_err(|_| format!("invalid QuickTime date {value}"))?;
+    let timestamp = if local_time {
+        let local = match Local.from_local_datetime(&date) {
+            chrono::LocalResult::Single(local) => local,
+            chrono::LocalResult::Ambiguous(first, _) => first,
+            chrono::LocalResult::None => return Err(format!("invalid local date {value}")),
+        };
+        local.timestamp()
+    } else {
+        date.and_utc().timestamp()
+    };
+    let seconds = timestamp + 2_082_844_800;
+    u64::try_from(seconds).map_err(|_| "date is before 1904".to_string())
+}
+
+fn find_box(data: &[u8], kind: &[u8; 4]) -> Option<(usize, usize, usize)> {
+    let mut pos = 0usize;
+    while pos + 8 <= data.len() {
+        let size32 = u32::from_be_bytes([data[pos], data[pos + 1], data[pos + 2], data[pos + 3]]);
+        let current = [data[pos + 4], data[pos + 5], data[pos + 6], data[pos + 7]];
+        let (header, size) = if size32 == 1 {
+            if pos + 16 > data.len() {
+                break;
+            }
+            (
+                16usize,
+                u64::from_be_bytes(data[pos + 8..pos + 16].try_into().ok()?) as usize,
+            )
+        } else if size32 == 0 {
+            (8usize, data.len().saturating_sub(pos))
+        } else {
+            (8usize, size32 as usize)
+        };
+        if size < header || pos + size > data.len() {
+            break;
+        }
+        if &current == kind {
+            return Some((pos, size, header));
+        }
+        pos += size;
+    }
+    None
 }
 
 fn apply_exif_text(data: &[u8], updates: &[(String, String)]) -> Result<Vec<u8>, String> {
@@ -503,6 +664,17 @@ fn title_case(name: &str) -> String {
     }
 }
 
+fn find_ifd_entry<'a>(
+    ifd: &'a crate::tiff::Ifd,
+    exif_ifd: Option<&'a crate::tiff::Ifd>,
+    tag: u16,
+) -> Option<&'a crate::tiff::Entry> {
+    ifd.entries
+        .iter()
+        .find(|entry| entry.tag == tag)
+        .or_else(|| exif_ifd.and_then(|ifd| ifd.entries.iter().find(|entry| entry.tag == tag)))
+}
+
 fn apply_exif(data: &mut [u8], updates: &[(String, String)]) -> Result<(), String> {
     let base = exif_base(data).ok_or_else(|| "no EXIF/TIFF payload found".to_string())?;
     let tiff = Tiff::at(data, base).ok_or_else(|| "invalid TIFF header".to_string())?;
@@ -517,19 +689,15 @@ fn apply_exif(data: &mut [u8], updates: &[(String, String)]) -> Result<(), Strin
         .and_then(|entry| tiff.read_ifd(entry.value_or_offset));
     for (name, value) in updates {
         let (entry, _) = match name.as_str() {
-            "DateTimeOriginal" => exif_ifd
-                .as_ref()
-                .and_then(|ifd| ifd.entries.iter().find(|entry| entry.tag == 0x9003))
-                .map(|entry| (entry, 0x9003)),
-            "CreateDate" => exif_ifd
-                .as_ref()
-                .and_then(|ifd| ifd.entries.iter().find(|entry| entry.tag == 0x9004))
-                .map(|entry| (entry, 0x9004)),
-            "ModifyDate" => ifd
-                .entries
-                .iter()
-                .find(|entry| entry.tag == 0x0132)
-                .map(|entry| (entry, 0x0132)),
+            "DateTimeOriginal" => {
+                find_ifd_entry(&ifd, exif_ifd.as_ref(), 0x9003).map(|entry| (entry, 0x9003))
+            }
+            "CreateDate" => {
+                find_ifd_entry(&ifd, exif_ifd.as_ref(), 0x9004).map(|entry| (entry, 0x9004))
+            }
+            "ModifyDate" => {
+                find_ifd_entry(&ifd, exif_ifd.as_ref(), 0x0132).map(|entry| (entry, 0x0132))
+            }
             _ => None,
         }
         .ok_or_else(|| format!("{name} tag not found in file"))?;

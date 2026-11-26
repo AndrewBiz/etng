@@ -49,6 +49,14 @@ fn child<'a>(data: &'a [u8], kind: &[u8; 4]) -> Option<BoxRef<'a>> {
 
 /// Canon boxes live inside a `uuid` payload without a standard tree; find by
 /// kind signature and validate the size field immediately before it.
+/// EXIF/TIFF payloads used by the writer: CMT2 (dates) then CMT1 (IFD0).
+pub fn exif_payloads(data: &[u8]) -> Vec<&[u8]> {
+    [b"CMT2", b"CMT1"]
+        .into_iter()
+        .filter_map(|kind| find_kind(data, kind))
+        .collect()
+}
+
 fn find_kind<'a>(data: &'a [u8], kind: &[u8; 4]) -> Option<&'a [u8]> {
     let mut pos = 4usize;
     while pos + 4 <= data.len() {
