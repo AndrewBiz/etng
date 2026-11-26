@@ -25,7 +25,7 @@ GitHub: https://github.com/AndrewBiz/etng · GitVerse: https://gitverse.ru/kazim
 ## Возможности
 
 - **Форматы:** JPEG, TIFF, DNG, CR2, CR3, NEF, ARW (частично), HEIC/HEIF.
-- **Метаданные:** EXIF, IPTC, XMP, GPS, MakerNotes Canon/Nikon/Sony/Apple,
+- **Метаданные:** EXIF, IPTC, XMP, GPS, ICC-профили, MakerNotes Canon/Nikon/Sony/Apple,
   IFD1-миниатюры, QuickTime/Track для CR3, QuickTime/HEVC для HEIC.
 - **Вывод:**
   - `-j` — JSON, совместимый с `exiftool -j`: порядок полей, `-G`/`-G1`, `-s`, `-n`,

@@ -11,7 +11,7 @@ use crate::jpeg;
 use crate::model::{FileReport, SystemFields, Tag, Value};
 use crate::options::ReadOptions;
 use crate::sniff::{self, FileType};
-use crate::{exif, heic, iptc, xmp};
+use crate::{exif, heic, icc, iptc, xmp};
 
 /// Read metadata for one file. Never panics: parser panics are converted into
 /// a per-file `error`.
@@ -253,6 +253,7 @@ fn parse_jpeg(data: &[u8], opts: &ReadOptions) -> ParseResult {
         xmp::parse(xmp_payload, &mut tags, &mut warnings);
     }
 
+    icc::parse_jpeg(data, &mut tags);
     push_aperture(&mut tags);
     push_composite(&mut tags, info.width, info.height);
     push_post_composites(&mut tags);
@@ -276,6 +277,7 @@ fn parse_tiff(data: &[u8], file_type: FileType, opts: &ReadOptions) -> ParseResu
     if file_type == FileType::Cr2 {
         adjust_cr2(&mut tags, data);
     }
+    icc::parse_tiff(data, &mut tags);
     let width = find_int(&tags, "ImageWidth");
     let height = find_int(&tags, "ImageHeight");
     push_aperture(&mut tags);
@@ -336,6 +338,7 @@ fn parse_heic(data: &[u8], opts: &ReadOptions) -> ParseResult {
             Value::Int(height as i64),
         ));
     }
+    icc::parse_heic(data, &mut tags);
     push_aperture(&mut tags);
     push_composite(&mut tags, width, height);
     push_post_composites(&mut tags);

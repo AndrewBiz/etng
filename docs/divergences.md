@@ -9,7 +9,7 @@ listed here. Entries are deliberate scope decisions, not silent bugs.
 | --- | --- | --- |
 | `Apple:` | partial | Flat IFD subset only. Complex plist payloads (`AEMatrix`, `RunTime*`, `AccelerationVector`) and exiftool's derived Apple sub-tags are skipped. |
 | `QuickTime:` | partial | CR3 movie header/tracks and HEIC ftyp/hvcC/ipco properties are read natively; other QuickTime containers and auxiliary images remain out of scope. |
-| `ICC_Profile:`, `ICC-header:`, `ICC-meas:`, `ICC-view:` | absent | ICC profile parsing is a separate subsystem. |
+| `ICC_Profile:`, `ICC-header:`, `ICC-meas:`, `ICC-view:` | supported | Header and common tags are read from JPEG APP2, TIFF `0x8773` and HEIC `colr/prof`; uncommon tag types are skipped. |
 | `Meta:` | absent | HEIF meta-box internals (`MetaImageSize`, `PrimaryItemReference`). |
 | `IFD1:` | partial | Thumbnail IFD tags are emitted, including real `ThumbnailImage` bytes (JPEG/TIFF/HEIC); only `ThumbnailOffset` differs because exiftool reports an adjusted base offset. |
 | `Vivo:` | absent | Vivo JSON metadata blob is not decoded. |
@@ -69,7 +69,7 @@ tag parity.
   normalized strings (for example `ExifVersion` or `YCbCrSubSampling`) may
   differ from exiftool's raw byte-list form; use `-b -TAG` for extraction.
 - **CSV columns** are the union of etng's emitted tags. Groups documented as
-  absent (`Apple:`, `QuickTime:`, ICC, `Meta:`) therefore add no columns, so a
+  partial (`Apple:`, `QuickTime:`, `Meta:`) therefore add fewer columns, so a
   CSV header can be shorter than exiftool's. Shared cells inherit the value
   differences listed above (`ThumbnailOffset`, `FocalLength35efl`, …).
 - **CSV without `-TAG`** reads the input twice: the first pass collects column

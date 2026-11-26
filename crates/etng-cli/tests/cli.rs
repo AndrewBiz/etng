@@ -693,3 +693,33 @@ fn heic_quicktime_metadata_is_native() {
     assert_eq!(json[0]["HEVCConfigurationVersion"], 1);
     assert_eq!(json[0]["BitDepthLuma"], 8);
 }
+
+#[test]
+fn icc_profile_is_native_for_jpeg_and_heic() {
+    for file in ["real/exif.jpg", "real/exif.heic"] {
+        let output = Command::new(bin())
+            .args([
+                "-j",
+                "-G1",
+                "--fallback=never",
+                corpus(file).to_str().unwrap(),
+            ])
+            .output()
+            .unwrap();
+        assert!(
+            !output.stdout.is_empty(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        let object = json[0].as_object().unwrap();
+        let icc: Vec<_> = object.keys().filter(|key| key.starts_with("ICC")).collect();
+        assert_eq!(icc.len(), 26, "{file}");
+        assert_eq!(object["ICC_Profile:ProfileDescription"], "Display P3");
+        assert!(
+            object["ICC_Profile:MediaWhitePoint"]
+                .as_str()
+                .is_some_and(|value| value.split(' ').count() == 3)
+        );
+    }
+}
