@@ -48,7 +48,8 @@ tag parity.
   set fall back to the raw value; `-n` always yields the machine value.
 - **MakerNotes** support is a subset: Canon, Nikon, Sony and a flat Apple IFD.
   Canon notes are now parsed relative to the TIFF header (JPEG/CR2/CR3), including
-  nested AF/Lighting/Time tables. ColorData, FilterInfo and full CanonCustom are
+  nested AF/Lighting/Time tables and ColorData WB levels for versions
+  32/33/34/48/64/65. FilterInfo, full CanonCustom and ColorData in CR3 Track4 are
   still missing. Unknown vendors produce a warning and no tags.
 - **ARW** is detected via `Make=SONY` + extension, but SubIFD images and some Sony
   nested tables are not read yet; PNG and video containers remain unsupported.

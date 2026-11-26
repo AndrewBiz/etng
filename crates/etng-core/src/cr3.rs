@@ -341,6 +341,133 @@ fn movie_header(payload: &[u8], tags: &mut Vec<Tag>) {
     }
 }
 
+fn read_i16(bytes: &[u8], index: usize, le: bool) -> Option<i16> {
+    let raw = bytes.get(index * 2..index * 2 + 2)?;
+    Some(if le {
+        i16::from_le_bytes([raw[0], raw[1]])
+    } else {
+        i16::from_be_bytes([raw[0], raw[1]])
+    })
+}
+
+fn color_data(bytes: &[u8], le: bool, tags: &mut Vec<Tag>, numeric: bool) {
+    let Some(version) = read_i16(bytes, 0, le) else {
+        return;
+    };
+    let (label, table): (&str, &[(&str, usize, bool)]) = match version {
+        32 => ("32 (1DXmkIII)", COLOR_DATA_10),
+        33 => ("33 (R5/R6)", COLOR_DATA_10),
+        34 => ("34 (R3)", COLOR_DATA_11),
+        48 => ("48 (R7/R10/R50/R6mkII)", COLOR_DATA_11),
+        64 => ("64 (R1/R5mkII)", COLOR_DATA_12),
+        65 => ("65 (R50V)", COLOR_DATA_12),
+        _ => return,
+    };
+    let mut tag = Tag::new(
+        "MakerNotes",
+        "Canon",
+        "ColorDataVersion",
+        Value::Int(version as i64),
+    );
+    tag = tag.with_print(label);
+    tags.push(tag);
+    for (name, index, quad) in table {
+        if *quad {
+            let values: Vec<String> = (0..4)
+                .filter_map(|offset| read_i16(bytes, index + offset, le))
+                .map(|value| value.to_string())
+                .collect();
+            if values.len() == 4 {
+                tags.push(Tag::new(
+                    "MakerNotes",
+                    "Canon",
+                    name,
+                    Value::Str(values.join(" ")),
+                ));
+            }
+        } else if let Some(value) = read_i16(bytes, *index, le)
+            && !numeric
+        {
+            tags.push(Tag::new(
+                "MakerNotes",
+                "Canon",
+                name,
+                Value::Int(value as i64),
+            ));
+        } else if let Some(value) = read_i16(bytes, *index, le) {
+            tags.push(Tag::new(
+                "MakerNotes",
+                "Canon",
+                name,
+                Value::Int(value as i64),
+            ));
+        }
+    }
+}
+
+const COLOR_DATA_10: &[(&str, usize, bool)] = &[
+    ("WB_RGGBLevelsAsShot", 0x55, true),
+    ("ColorTempAsShot", 0x59, false),
+    ("WB_RGGBLevelsAuto", 0x5a, true),
+    ("ColorTempAuto", 0x5e, false),
+    ("WB_RGGBLevelsMeasured", 0x5f, true),
+    ("ColorTempMeasured", 0x63, false),
+    ("WB_RGGBLevelsDaylight", 0x96, true),
+    ("ColorTempDaylight", 0x9a, false),
+    ("WB_RGGBLevelsShade", 0x9b, true),
+    ("ColorTempShade", 0x9f, false),
+    ("WB_RGGBLevelsCloudy", 0xa0, true),
+    ("ColorTempCloudy", 0xa4, false),
+    ("WB_RGGBLevelsTungsten", 0xa5, true),
+    ("ColorTempTungsten", 0xa9, false),
+    ("WB_RGGBLevelsFluorescent", 0xaa, true),
+    ("ColorTempFluorescent", 0xae, false),
+    ("WB_RGGBLevelsKelvin", 0xaf, true),
+    ("ColorTempKelvin", 0xb3, false),
+    ("WB_RGGBLevelsFlash", 0xb4, true),
+    ("ColorTempFlash", 0xb8, false),
+];
+
+const COLOR_DATA_11: &[(&str, usize, bool)] = &[
+    ("WB_RGGBLevelsAsShot", 0x69, true),
+    ("ColorTempAsShot", 0x6d, false),
+    ("WB_RGGBLevelsAuto", 0x6e, true),
+    ("ColorTempAuto", 0x72, false),
+    ("WB_RGGBLevelsMeasured", 0x73, true),
+    ("ColorTempMeasured", 0x77, false),
+    ("WB_RGGBLevelsDaylight", 0xcd, true),
+    ("ColorTempDaylight", 0xd1, false),
+    ("WB_RGGBLevelsShade", 0xd2, true),
+    ("ColorTempShade", 0xd6, false),
+    ("WB_RGGBLevelsCloudy", 0xd7, true),
+    ("ColorTempCloudy", 0xdb, false),
+    ("WB_RGGBLevelsTungsten", 0xdc, true),
+    ("ColorTempTungsten", 0xe0, false),
+    ("WB_RGGBLevelsFluorescent", 0xe1, true),
+    ("ColorTempFluorescent", 0xe5, false),
+    ("WB_RGGBLevelsKelvin", 0xe6, true),
+    ("ColorTempKelvin", 0xea, false),
+    ("WB_RGGBLevelsFlash", 0xeb, true),
+    ("ColorTempFlash", 0xef, false),
+];
+
+const COLOR_DATA_12: &[(&str, usize, bool)] = &[
+    ("WB_RGGBLevelsAsShot", 0x69, true),
+    ("ColorTempAsShot", 0x6d, false),
+    ("WB_RGGBLevelsDaylight", 0x6e, true),
+    ("ColorTempDaylight", 0x72, false),
+    ("WB_RGGBLevelsShade", 0x73, true),
+    ("ColorTempShade", 0x77, false),
+    ("WB_RGGBLevelsCloudy", 0x78, true),
+    ("ColorTempCloudy", 0x7c, false),
+    ("WB_RGGBLevelsTungsten", 0x7d, true),
+    ("ColorTempTungsten", 0x81, false),
+    ("WB_RGGBLevelsFluorescent", 0x82, true),
+    ("ColorTempFluorescent", 0x86, false),
+    ("WB_RGGBLevelsFlash", 0x87, true),
+    ("ColorTempFlash", 0x8b, false),
+];
+
 pub(crate) fn canon_tables(payload: &[u8], ifd_offset: u32, tags: &mut Vec<Tag>, numeric: bool) {
     let Some(tiff) = Tiff::new(payload) else {
         return;
@@ -354,6 +481,7 @@ pub(crate) fn canon_tables(payload: &[u8], ifd_offset: u32, tags: &mut Vec<Tag>,
         };
         match entry.tag {
             0x02 => focal_length(bytes, tiff.le, tags, numeric),
+            0x4001 => color_data(bytes, tiff.le, tags, numeric),
             0x12 => af_info(bytes, tiff.le, true, tags, numeric),
             0x26 | 0x3c => af_info(bytes, tiff.le, false, tags, numeric),
             0x35 => int32_table(bytes, tiff.le, "Canon::TimeInfo", tags, numeric, true),
@@ -1359,4 +1487,62 @@ fn first_sample<'a>(stbl: &[u8], data: &'a [u8]) -> Option<&'a [u8]> {
         return None;
     }
     data.get(offset..offset.checked_add(size)?)
+}
+
+#[cfg(test)]
+mod color_data_tests {
+    use super::*;
+
+    fn put_i16(bytes: &mut [u8], index: usize, value: i16) {
+        bytes[index * 2..index * 2 + 2].copy_from_slice(&value.to_le_bytes());
+    }
+
+    #[test]
+    fn parses_version_48_wb_levels_and_temperatures() {
+        let mut bytes = vec![0u8; 0x400 * 2];
+        put_i16(&mut bytes, 0, 48);
+        for (offset, value) in [1792, 1024, 1024, 1697].into_iter().enumerate() {
+            put_i16(&mut bytes, 0x69 + offset, value);
+        }
+        put_i16(&mut bytes, 0x6d, 5503);
+        for (offset, value) in [1753, 1024, 1024, 1762].into_iter().enumerate() {
+            put_i16(&mut bytes, 0xcd + offset, value);
+        }
+        put_i16(&mut bytes, 0xd1, 5200);
+
+        let mut tags = Vec::new();
+        color_data(&bytes, true, &mut tags, false);
+
+        let get = |name: &str| {
+            tags.iter()
+                .find(|tag| tag.name == name)
+                .map(|tag| tag.value.display())
+        };
+        assert_eq!(get("ColorDataVersion").as_deref(), Some("48"));
+        assert_eq!(
+            tags.iter()
+                .find(|tag| tag.name == "ColorDataVersion")
+                .and_then(|tag| tag.print.as_deref()),
+            Some("48 (R7/R10/R50/R6mkII)")
+        );
+        assert_eq!(
+            get("WB_RGGBLevelsAsShot").as_deref(),
+            Some("1792 1024 1024 1697")
+        );
+        assert_eq!(get("ColorTempAsShot").as_deref(), Some("5503"));
+        assert_eq!(
+            get("WB_RGGBLevelsDaylight").as_deref(),
+            Some("1753 1024 1024 1762")
+        );
+        assert_eq!(get("ColorTempDaylight").as_deref(), Some("5200"));
+    }
+
+    #[test]
+    fn ignores_unknown_color_data_version() {
+        let mut bytes = vec![0u8; 64];
+        put_i16(&mut bytes, 0, 7);
+        let mut tags = Vec::new();
+        color_data(&bytes, true, &mut tags, false);
+        assert!(tags.is_empty());
+    }
 }
