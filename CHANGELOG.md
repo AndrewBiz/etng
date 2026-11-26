@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.11.0 — 2026-11-26
+
+### XMP/IPTC даты
+
+- Обновляются существующие XMP `photoshop:DateCreated`, `xmp:CreateDate`,
+  `xmp:ModifyDate`.
+- Обновляются IPTC `DateCreated`/`TimeCreated`,
+  `DigitalCreationDate`/`DigitalCreationTime`; смещение времени сохраняется.
+- EXIF и sidecar-обновления применяются одним atomic replace.
+- 109 тестов.
+
 ## 0.10.0 — 2026-11-26
 
 ### ModifyDate и AllDates
