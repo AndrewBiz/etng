@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.7.0 — 2026-11-26
+
+### MTS/M2TS
+
+- Детект 192-байтных M2TS и 188-байтных TS.
+- Demux: timestamp, adaptation field, PES, ES по PID.
+- H.264 emulation prevention и MDPM.
+- `H264:DateTimeOriginal`, `GPS:GPSVersionID`, `GPSLatitude/Ref`,
+  `GPSLongitude/Ref`; на реальном MTS совпало с exiftool.
+- `M2TS:Duration`, кодеки и треки пока не читаются.
+
+### Проверки
+
+- 96 тестов, clippy/fmt чистые, `xtask compare` — 17 файлов, 0 расхождений.
+
 ## 0.6.0 — 2026-11-26
 
 ### Чтение
