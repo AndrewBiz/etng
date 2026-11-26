@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.4.0 — 2026-11-26
+
+### ICC
+
+- Профили из JPEG APP2, TIFF `0x8773`, HEIC `colr/prof`.
+- 16 тегов заголовка, ProfileDescription/Copyright, white/black point,
+  RGB-матрицы, ChromaticAdaptation, TRC, Technology, view/meas.
+- Строки `desc`/`text`/`mluc`/`utf8`, XYZ и enum-подписи.
+- Точное совпадение с exiftool на Canon 40D, Nikon D70, exif.jpg, exif.heic.
+- ICC больше не входит в known-vendor маску `xtask compare`.
+
+### Проверки
+
+- 91 тест, clippy/fmt чистые, `xtask compare` — 16 файлов, 0 расхождений.
+
 ## 0.3.0 — 2026-11-26
 
 ### Sony ARW
