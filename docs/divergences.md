@@ -101,8 +101,8 @@ tag parity.
 
 ## Write mode
 
-- Existing EXIF date fields are rewritten; missing `DateTimeOriginal` and
-  `CreateDate` are inserted into ExifIFD. Missing `ModifyDate` is not inserted.
+- Existing EXIF date fields are rewritten; missing `DateTimeOriginal`,
+  `CreateDate` and `ModifyDate` are inserted (ExifIFD / IFD0).
 - JPEG and TIFF-family containers only; HEIC/CR3/MOV writes are not implemented.
 - `FileModifyDate` uses local time and is set after the atomic file replacement.
 

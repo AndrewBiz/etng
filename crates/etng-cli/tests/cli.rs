@@ -862,3 +862,62 @@ fn inserts_missing_datetime_original() {
     assert_eq!(json[0]["ExifIFD:DateTimeOriginal"], "2024:05:06 07:08:09");
     assert_eq!(json[0]["IFD0:Make"], "SONY");
 }
+
+#[test]
+fn inserts_missing_modify_date() {
+    let dir = temp_dir("insert-modify");
+    fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("missing-modify.jpg");
+    fs::copy(corpus("synthetic/base.jpg"), &path).unwrap();
+
+    let output = Command::new(bin())
+        .args(["-ModifyDate=2024:05:06 07:08:09", path.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let read = Command::new(bin())
+        .args(["-j", "-G1", "-ModifyDate", path.to_str().unwrap()])
+        .output()
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&read.stdout).unwrap();
+    assert_eq!(json[0]["IFD0:ModifyDate"], "2024:05:06 07:08:09");
+}
+
+#[test]
+fn all_dates_inserts_missing_exif_dates() {
+    let dir = temp_dir("insert-all");
+    fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("all-dates.jpg");
+    fs::copy(corpus("phtools/tags/tag_dto3.JPG"), &path).unwrap();
+
+    let output = Command::new(bin())
+        .args(["-AllDates=2024:05:06 07:08:09", path.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let read = Command::new(bin())
+        .args([
+            "-j",
+            "-G1",
+            "-DateTimeOriginal",
+            "-CreateDate",
+            "-ModifyDate",
+            path.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&read.stdout).unwrap();
+    assert_eq!(json[0]["ExifIFD:DateTimeOriginal"], "2024:05:06 07:08:09");
+    assert_eq!(json[0]["ExifIFD:CreateDate"], "2024:05:06 07:08:09");
+    assert_eq!(json[0]["IFD0:ModifyDate"], "2024:05:06 07:08:09");
+}
