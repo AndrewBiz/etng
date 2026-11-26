@@ -51,8 +51,9 @@ tag parity.
   nested AF/Lighting/Time tables and ColorData WB levels for versions
   32/33/34/48/64/65. FilterInfo, full CanonCustom and ColorData in CR3 Track4 are
   still missing. Unknown vendors produce a warning and no tags.
-- **ARW** is detected via `Make=SONY` + extension, but SubIFD images and some Sony
-  nested tables are not read yet; PNG and video containers remain unsupported.
+- **ARW** is detected via `Make=SONY` + extension; the first SubIFD and
+  `PreviewImage` are read natively. The encrypted SR2SubIFD block and some Sony
+  binary tables are not decoded yet; PNG and video containers remain unsupported.
 - **DNG/NEF/CR2 detection** uses the file extension to disambiguate TIFF-family
   containers when the signature alone is ambiguous (exiftool does the same for
   extension-based TIFF variants). CR2 preview tags (273/279) are re-interpreted
