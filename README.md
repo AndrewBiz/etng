@@ -9,7 +9,7 @@ ExifTool нового поколения: быстрый CLI на Rust с выв
 запись дат. Без Perl, с нативным
 разбором контейнеров и опциональным fallback на системный exiftool.
 
-**Статус:** alpha (0.15.0). Ядро чтения стабильно, покрытие форматов расширяется.
+**Статус:** alpha (0.16.0). Ядро чтения стабильно, покрытие форматов расширяется.
 
 GitHub: https://github.com/AndrewBiz/etng · GitVerse: https://gitverse.ru/kazimir_bizik/etng
 
@@ -47,9 +47,9 @@ GitHub: https://github.com/AndrewBiz/etng · GitVerse: https://gitverse.ru/kazim
 Linux x86_64, статический бинарник (musl), без зависимостей:
 
 ```bash
-curl -LO https://github.com/AndrewBiz/etng/releases/download/v0.15.0/etng-0.15.0-x86_64-unknown-linux-musl.tar.gz
-tar xzf etng-0.15.0-x86_64-unknown-linux-musl.tar.gz
-install -m755 etng-0.15.0-x86_64-unknown-linux-musl/etng ~/.local/bin/etng
+curl -LO https://github.com/AndrewBiz/etng/releases/download/v0.16.0/etng-0.16.0-x86_64-unknown-linux-musl.tar.gz
+tar xzf etng-0.16.0-x86_64-unknown-linux-musl.tar.gz
+install -m755 etng-0.16.0-x86_64-unknown-linux-musl/etng ~/.local/bin/etng
 ```
 
 Контрольная сумма — в `.sha256` рядом с архивом. Все релизы:
@@ -91,7 +91,7 @@ etng -j -b -ThumbnailImage photo.jpg   # base64 в JSON
 etng -j -x ThumbnailImage photo.jpg    # исключить тег
 etng -ver                              # версия совместимости
 
-# Запись метаданных (JPEG/TIFF)
+# Запись метаданных
 etng -DateTimeOriginal='2024:05:06 07:08:09' photo.jpg
 etng -AllDates='2024:05:06 07:08:09' -FileModifyDate='2024:05:06 07:08:09' photo.jpg
 ```
