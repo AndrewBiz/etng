@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.6.0 — 2026-11-26
+
+### Чтение
+
+- XMP: вложенные `LocationShown*` и `Collections`, нормализация
+  `Iptc4xmpCore`/`Iptc4xmpExt` — 9 тегов phtools закрыты.
+- PNG: IHDR, eXIf, XMP из iTXt/tEXt, sRGB, tIME.
+- MOV: ftyp, mvhd (CreateDate/ModifyDate/Duration), mdat.
+- MTS/M2TS остаётся через fallback.
+
+### Проверки
+
+- 95 тестов, clippy/fmt чистые, `xtask compare` — 17 файлов, 0 расхождений.
+
 ## 0.5.0 — 2026-11-26
 
 ### CR3
