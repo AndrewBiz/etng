@@ -185,7 +185,8 @@ Options:
   --fallback MODE  auto|never|always (по умолчанию auto)
   -TAG=VALUE       записать дату: DateTimeOriginal, CreateDate, ModifyDate,
                    FileModifyDate, AllDates; MWG: City, Country, State,
-                   Location, Keywords, Creator, Copyright
+                   Location, Keywords, Creator, Copyright. Keywords/Creator
+                   можно повторять для списка
   -ver             версия совместимости с exiftool
   -h, --help       эта справка
 

@@ -1104,3 +1104,47 @@ fn writes_mwg_text_tags() {
     assert_eq!(json[0]["IFD0:Artist"], "ANB");
     assert_eq!(json[0]["IFD0:Copyright"], "(c) ANB");
 }
+
+#[test]
+fn writes_multi_value_keywords_and_creator() {
+    let dir = temp_dir("mwg-multi");
+    fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("multi.jpg");
+    fs::copy(corpus("phtools/dates/7filemodifydate.JPG"), &path).unwrap();
+
+    let output = Command::new(bin())
+        .args([
+            "-Keywords=alpha",
+            "-Keywords=beta",
+            "-Creator=Alice",
+            "-Creator=Bob",
+            path.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let read = Command::new(bin())
+        .args([
+            "-j",
+            "-G1",
+            "-XMP-dc:Subject",
+            "-IPTC:Keywords",
+            "-XMP-dc:Creator",
+            "-IPTC:By-line",
+            "-IFD0:Artist",
+            path.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&read.stdout).unwrap();
+    assert_eq!(json[0]["XMP-dc:Subject"], "alpha, beta");
+    assert_eq!(json[0]["IPTC:Keywords"], "alpha, beta");
+    assert_eq!(json[0]["XMP-dc:Creator"], "Alice, Bob");
+    assert_eq!(json[0]["IPTC:By-line"], "Alice, Bob");
+    assert_eq!(json[0]["IFD0:Artist"], "Alice; Bob");
+}

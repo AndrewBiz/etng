@@ -104,8 +104,8 @@ tag parity.
 - Existing EXIF date fields are rewritten; missing `DateTimeOriginal`,
   `CreateDate` and `ModifyDate` are inserted (ExifIFD / IFD0).
 - JPEG XMP/IPTC date and MWG text fields are updated or created.
-- `Keywords`/`Creator` are written as a single value; multi-value append is not
-  implemented yet.
+- `Keywords`/`Creator` accept repeated flags and write lists (XMP Bag/Seq,
+  repeated IPTC records, EXIF Artist joined with `; `).
 - JPEG and TIFF-family containers only; HEIC/CR3/MOV writes are not implemented.
 - `FileModifyDate` uses local time and is set after the atomic file replacement.
 
