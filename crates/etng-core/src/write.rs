@@ -113,13 +113,16 @@ pub fn write(path: &Path, assignments: &[(String, String)]) -> Result<usize, Str
 
 fn apply_exif_text(data: &[u8], updates: &[(String, String)]) -> Result<Vec<u8>, String> {
     let mut out = data.to_vec();
-    for (name, value) in updates {
-        let tag = match name.as_str() {
-            "Creator" => 0x013B,
-            "Copyright" => 0x8298,
-            _ => continue,
-        };
-        out = set_ifd0_string(&out, tag, value)?;
+    let creators: Vec<&str> = updates
+        .iter()
+        .filter(|(name, _)| name == "Creator")
+        .map(|(_, value)| value.as_str())
+        .collect();
+    if !creators.is_empty() {
+        out = set_ifd0_string(&out, 0x013B, &creators.join("; "))?;
+    }
+    if let Some((_, value)) = updates.iter().rev().find(|(name, _)| name == "Copyright") {
+        out = set_ifd0_string(&out, 0x8298, value)?;
     }
     Ok(out)
 }

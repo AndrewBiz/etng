@@ -117,8 +117,7 @@ etng -AllDates='2024:05:06 07:08:09' -FileModifyDate='2024:05:06 07:08:09' photo
 
 - **Запись:** JPEG/TIFF; HEIC/CR3/MOV не поддержаны. Даты и MWG-текстовые
   теги перезаписываются/вставляются; XMP/IPTC при отсутствии создаются
-  минимальные. `Keywords`/`Creator` при записи заменяют список одним значением
-  (для нескольких значений нужен отдельный change).
+  минимальные. `Keywords`/`Creator` принимают повторяемый флаг и пишут список.
 - **CR3 / Canon:** ColorData для JPEG/CR2 (версии 32/33/34/48/64/65), CTMD
   Track4, FilterInfo, FocusBracketing и LevelInfo уже читаются; полный
   CanonCustom и сложные Composite ещё не разобраны,

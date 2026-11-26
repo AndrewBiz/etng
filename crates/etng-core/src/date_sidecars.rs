@@ -460,6 +460,10 @@ fn text_xmp(
     })
 }
 
+fn text_is_array(name: &str) -> bool {
+    matches!(name, "Keywords" | "Creator")
+}
+
 fn text_dataset(name: &str) -> Option<u8> {
     Some(match name {
         "Keywords" => 25,
@@ -502,13 +506,28 @@ fn update_xmp_text(data: &[u8], entries: &[(String, String)]) -> Result<Option<V
         .map_err(|_| "XMP packet is not valid UTF-8".to_string())?;
     let mut changed = false;
     for (name, value) in entries {
-        let Some((property, prefix, uri, container)) = text_xmp(name) else {
+        if text_is_array(name) {
+            continue;
+        }
+        let Some((property, _, _, _)) = text_xmp(name) else {
             continue;
         };
-        changed |= match container {
-            Some(kind) => set_xmp_array(&mut xml, property, prefix, uri, kind, value),
-            None => set_xmp_value(&mut xml, property, &escape_xml(value)),
+        changed |= set_xmp_value(&mut xml, property, &escape_xml(value));
+    }
+    for name in ["Keywords", "Creator"] {
+        let values: Vec<String> = entries
+            .iter()
+            .filter(|(entry_name, _)| entry_name == name)
+            .map(|(_, value)| value.clone())
+            .collect();
+        if values.is_empty() {
+            continue;
+        }
+        let Some((property, prefix, uri, kind)) = text_xmp(name) else {
+            continue;
         };
+        let kind = kind.unwrap_or("Bag");
+        changed |= set_xmp_array(&mut xml, property, prefix, uri, kind, &values);
     }
     if !changed {
         return Ok(None);
@@ -522,22 +541,43 @@ fn create_xmp_text(data: &[u8], entries: &[(String, String)]) -> Result<Option<V
     let mut namespaces: Vec<(&str, &str)> = Vec::new();
     let mut body = String::new();
     for (name, value) in entries {
-        let Some((property, prefix, uri, container)) = text_xmp(name) else {
+        if text_is_array(name) {
+            continue;
+        }
+        let Some((property, prefix, uri, _)) = text_xmp(name) else {
             continue;
         };
         if !namespaces.iter().any(|(known, _)| *known == prefix) {
             namespaces.push((prefix, uri));
         }
-        body.push_str(&format!("   <{property}>"));
-        if let Some(kind) = container {
-            body.push_str(&format!(
-                "<rdf:{kind}><rdf:li>{}</rdf:li></rdf:{kind}>",
-                escape_xml(value)
-            ));
-        } else {
-            body.push_str(&escape_xml(value));
+        body.push_str(&format!(
+            "   <{property}>{}</{property}>\n",
+            escape_xml(value)
+        ));
+    }
+    for name in ["Keywords", "Creator"] {
+        let values: Vec<&str> = entries
+            .iter()
+            .filter(|(entry_name, _)| entry_name == name)
+            .map(|(_, value)| value.as_str())
+            .collect();
+        if values.is_empty() {
+            continue;
         }
-        body.push_str(&format!("</{property}>\n"));
+        let Some((property, prefix, uri, kind)) = text_xmp(name) else {
+            continue;
+        };
+        if !namespaces.iter().any(|(known, _)| *known == prefix) {
+            namespaces.push((prefix, uri));
+        }
+        let kind = kind.unwrap_or("Bag");
+        let items: String = values
+            .iter()
+            .map(|value| format!("<rdf:li>{}</rdf:li>", escape_xml(value)))
+            .collect();
+        body.push_str(&format!(
+            "   <{property}><rdf:{kind}>{items}</rdf:{kind}></{property}>\n"
+        ));
     }
     if body.is_empty() {
         return Ok(None);
@@ -567,33 +607,25 @@ fn set_xmp_array(
     prefix: &str,
     uri: &str,
     kind: &str,
-    value: &str,
+    values: &[String],
 ) -> bool {
+    let items: String = values
+        .iter()
+        .map(|value| format!("    <rdf:li>{}</rdf:li>\n", escape_xml(value)))
+        .collect();
+    let content = format!("\n   <rdf:{kind}>\n{items}   </rdf:{kind}>\n  ");
     let open = format!("<{property}");
     if let Some(start) = xml.find(&open) {
         let Some(tag_end) = xml[start..].find('>') else {
             return false;
         };
-        let content = start + tag_end + 1;
-        if let Some(close) = xml[content..].find(&format!("</{property}>")) {
-            let inner = format!(
-                "\n   <rdf:{kind}>\n    <rdf:li>{}</rdf:li>\n   </rdf:{kind}>\n  ",
-                escape_xml(value)
-            );
-            xml.replace_range(content..content + close, &inner);
+        let inner = start + tag_end + 1;
+        if let Some(close) = xml[inner..].find(&format!("</{property}>")) {
+            xml.replace_range(inner..inner + close, &content);
             return true;
         }
     }
-    add_xmp_property(
-        xml,
-        property,
-        &format!(
-            "\n   <rdf:{kind}>\n    <rdf:li>{}</rdf:li>\n   </rdf:{kind}>\n  ",
-            escape_xml(value)
-        ),
-        prefix,
-        uri,
-    )
+    add_xmp_property(xml, property, &content, prefix, uri)
 }
 
 fn add_xmp_property(
@@ -664,14 +696,27 @@ fn update_iptc_text(data: &[u8], entries: &[(String, String)]) -> Result<Option<
 fn merge_text_iim(existing: &[u8], entries: &[(String, String)]) -> Option<(Vec<u8>, bool)> {
     let mut records = parse_iim(existing);
     let mut changed = false;
+    let mut grouped: Vec<(String, Vec<String>)> = Vec::new();
     for (name, value) in entries {
-        let Some(dataset) = text_dataset(name) else {
+        if let Some((_, values)) = grouped.iter_mut().find(|(known, _)| known == name) {
+            values.push(value.clone());
+        } else {
+            grouped.push((name.clone(), vec![value.clone()]));
+        }
+    }
+    for (name, values) in grouped {
+        let Some(dataset) = text_dataset(&name) else {
             continue;
         };
-        if name == "Keywords" || name == "Creator" {
+        if text_is_array(&name) {
             records.retain(|(record, current, _)| !(*record == 2 && *current == dataset));
+            for value in values {
+                records.push((2, dataset, value.into_bytes()));
+            }
+            changed = true;
+        } else if let Some(value) = values.into_iter().next() {
+            changed |= set_record(&mut records, dataset, value.into_bytes());
         }
-        changed |= set_record(&mut records, dataset, value.as_bytes().to_vec());
     }
     if !changed {
         return None;
