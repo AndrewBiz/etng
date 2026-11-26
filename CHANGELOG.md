@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.5.0 — 2026-11-26
+
+### CR3
+
+- Track4 CTMD: вложенные Canon-блоки, ColorData и сопутствующие теги в `Track4`.
+- `SampleTime`/`SampleDuration`, black/white levels ColorData.
+- FilterInfo (10 creative-фильтров), FocusBracketingInfo, LevelInfo
+  (RollAngle/PitchAngle/FocalLength2).
+- Composite для CR3: ISO, Lens, Rotation, WB_RGGBLevels, Red/BlueBalance.
+- На R50: 548 из 577 тегов exiftool (было 393).
+
+### Проверки
+
+- 92 теста, clippy/fmt чистые, `xtask compare` — 16 файлов, 0 расхождений.
+
 ## 0.4.0 — 2026-11-26
 
 ### ICC
