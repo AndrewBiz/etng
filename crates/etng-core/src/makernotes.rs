@@ -140,35 +140,31 @@ fn candidate_layouts(vendor: &str, note: &[u8], file_le: bool) -> Vec<Layout> {
                 });
             }
         }
-        "Sony" => {
-            if note.starts_with(b"SONY") {
-                layouts.push(Layout {
-                    ifd_offset: 12,
-                    base_for_values: 0,
-                    le: true,
-                });
-                layouts.push(Layout {
-                    ifd_offset: 12,
-                    base_for_values: 12,
-                    le: true,
-                });
-            }
+        "Sony" if note.starts_with(b"SONY") => {
+            layouts.push(Layout {
+                ifd_offset: 12,
+                base_for_values: 0,
+                le: true,
+            });
+            layouts.push(Layout {
+                ifd_offset: 12,
+                base_for_values: 12,
+                le: true,
+            });
         }
-        "Apple" => {
-            if note.starts_with(b"Apple iOS\0") {
-                // Header: "Apple iOS\0" + version, then a big-endian IFD whose
-                // entries start at offset 12 (`MM` marks the byte order).
-                layouts.push(Layout {
-                    ifd_offset: 12,
-                    base_for_values: 0,
-                    le: false,
-                });
-                layouts.push(Layout {
-                    ifd_offset: 14,
-                    base_for_values: 0,
-                    le: false,
-                });
-            }
+        "Apple" if note.starts_with(b"Apple iOS\0") => {
+            // Header: "Apple iOS\0" + version, then a big-endian IFD whose
+            // entries start at offset 12 (`MM` marks the byte order).
+            layouts.push(Layout {
+                ifd_offset: 12,
+                base_for_values: 0,
+                le: false,
+            });
+            layouts.push(Layout {
+                ifd_offset: 14,
+                base_for_values: 0,
+                le: false,
+            });
         }
         _ => {}
     }

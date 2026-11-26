@@ -78,7 +78,9 @@ pub fn parse(data: &[u8], out: &mut Vec<Tag>) {
         let brands: Vec<String> = payload
             .get(8..)
             .unwrap_or_default()
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .map(|chunk| String::from_utf8_lossy(chunk).trim_end().to_string())
             .collect();
         if !brands.is_empty() {

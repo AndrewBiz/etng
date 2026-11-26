@@ -84,10 +84,8 @@ pub fn scan(data: &[u8]) -> JpegInfo<'_> {
                     info.photoshop.get_or_insert(rest);
                 }
             }
-            m if is_sof(m) => {
-                if info.width.is_none() {
-                    parse_sof(m, segment, &mut info);
-                }
+            m if is_sof(m) && info.width.is_none() => {
+                parse_sof(m, segment, &mut info);
             }
             _ => {}
         }
