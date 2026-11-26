@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.10.0 — 2026-11-26
+
+### ModifyDate и AllDates
+
+- Отсутствующий `ModifyDate` вставляется в IFD0 (append-only IFD0).
+- TIFF header переводится на новый IFD0; JPEG APP1 пересчитывается.
+- `AllDates` обновляет/вставляет DateTimeOriginal, CreateDate, ModifyDate.
+- 105 тестов.
+
 ## 0.9.0 — 2026-11-26
 
 ### Вставка дат
