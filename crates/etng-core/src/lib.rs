@@ -18,6 +18,7 @@ pub mod compare;
 pub mod compat;
 pub mod cr3;
 pub mod csv;
+pub mod date_sidecars;
 pub mod exif;
 pub mod formatting;
 pub mod heic;

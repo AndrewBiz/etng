@@ -921,3 +921,77 @@ fn all_dates_inserts_missing_exif_dates() {
     assert_eq!(json[0]["ExifIFD:CreateDate"], "2024:05:06 07:08:09");
     assert_eq!(json[0]["IFD0:ModifyDate"], "2024:05:06 07:08:09");
 }
+
+#[test]
+fn writes_xmp_and_iptc_datetimeoriginal() {
+    let dir = temp_dir("sidecar-dto");
+    fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("dates.jpg");
+    fs::copy(corpus("phtools/dates/1exif_datetimeoriginal.JPG"), &path).unwrap();
+
+    let output = Command::new(bin())
+        .args([
+            "-DateTimeOriginal=2024:05:06 07:08:09",
+            path.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let read = Command::new(bin())
+        .args([
+            "-j",
+            "-G1",
+            "-XMP-photoshop:DateCreated",
+            "-IPTC:DateCreated",
+            "-IPTC:TimeCreated",
+            path.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&read.stdout).unwrap();
+    assert_eq!(json[0]["XMP-photoshop:DateCreated"], "2024:05:06 07:08:09");
+    assert_eq!(json[0]["IPTC:DateCreated"], 20240506);
+    assert!(
+        json[0]["IPTC:TimeCreated"]
+            .as_str()
+            .unwrap()
+            .starts_with("070809")
+    );
+}
+
+#[test]
+fn writes_xmp_and_iptc_createdate() {
+    let dir = temp_dir("sidecar-cd");
+    fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("dates.jpg");
+    fs::copy(corpus("phtools/dates/1exif_datetimeoriginal.JPG"), &path).unwrap();
+
+    let output = Command::new(bin())
+        .args(["-CreateDate=2024:05:06 07:08:09", path.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let read = Command::new(bin())
+        .args([
+            "-j",
+            "-G1",
+            "-XMP-xmp:CreateDate",
+            "-IPTC:DigitalCreationDate",
+            path.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&read.stdout).unwrap();
+    assert_eq!(json[0]["XMP-xmp:CreateDate"], "2024:05:06 07:08:09");
+    assert_eq!(json[0]["IPTC:DigitalCreationDate"], 20240506);
+}
