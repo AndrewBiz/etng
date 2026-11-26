@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.2.0 — 2026-11-26
+
+### Canon
+
+- ColorData (`MakerNotes:0x4001`) для версий 32/33/34/48/64/65:
+  `ColorDataVersion`, `WB_RGGBLevels*`, `ColorTemp*`.
+- Значения совпадают с exiftool на JPEG R50 (version 48).
+- CR3 Track4 ColorData и FilterInfo пока не покрыты; `auto` дополняет exiftool.
+
+### Проверки
+
+- 88 тестов, clippy/fmt чистые, `xtask compare` — 16 файлов, 0 расхождений.
+
 ## 0.1.0 — 2026-11-26
 
 Первый публичный релиз.
