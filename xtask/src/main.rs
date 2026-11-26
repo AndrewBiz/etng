@@ -303,16 +303,7 @@ fn compare() -> Result<(), Box<dyn Error>> {
         "FileCreateDate",
         "Warning",
     ];
-    const KNOWN_PREFIXES: [&str; 8] = [
-        "Apple:",
-        "QuickTime:",
-        "ICC_Profile:",
-        "ICC-header:",
-        "ICC-meas:",
-        "ICC-view:",
-        "Meta:",
-        "Vivo:",
-    ];
+    const KNOWN_PREFIXES: [&str; 4] = ["Apple:", "QuickTime:", "Meta:", "Vivo:"];
     const SKIP_FILES: [&str; 3] = ["broken.jpg", "endless_loop.jpg", "invalid-gps"];
     const KNOWN_KEYS: [&str; 25] = [
         "Composite:GPSAltitude",

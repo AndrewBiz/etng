@@ -21,6 +21,7 @@ pub mod csv;
 pub mod exif;
 pub mod formatting;
 pub mod heic;
+pub mod icc;
 pub mod iptc;
 pub mod jpeg;
 pub mod json;
