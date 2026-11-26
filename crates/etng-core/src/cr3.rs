@@ -190,6 +190,7 @@ pub(crate) fn parse(data: &[u8], opts: &ReadOptions) -> (Vec<Tag>, Vec<String>, 
     }
 
     tracks(data, &mut tags);
+    track4_metadata(data, &mut tags);
 
     for packet in xmp_packets(data) {
         xmp::parse(packet, &mut tags, &mut warnings);
@@ -426,6 +427,10 @@ const COLOR_DATA_10: &[(&str, usize, bool)] = &[
     ("ColorTempKelvin", 0xb3, false),
     ("WB_RGGBLevelsFlash", 0xb4, true),
     ("ColorTempFlash", 0xb8, false),
+    ("PerChannelBlackLevel", 0x157, true),
+    ("NormalWhiteLevel", 0x32a, false),
+    ("SpecularWhiteLevel", 0x32b, false),
+    ("LinearityUpperMargin", 0x32c, false),
 ];
 
 const COLOR_DATA_11: &[(&str, usize, bool)] = &[
@@ -449,6 +454,10 @@ const COLOR_DATA_11: &[(&str, usize, bool)] = &[
     ("ColorTempKelvin", 0xea, false),
     ("WB_RGGBLevelsFlash", 0xeb, true),
     ("ColorTempFlash", 0xef, false),
+    ("PerChannelBlackLevel", 0x16b, true),
+    ("NormalWhiteLevel", 0x280, false),
+    ("SpecularWhiteLevel", 0x281, false),
+    ("LinearityUpperMargin", 0x282, false),
 ];
 
 const COLOR_DATA_12: &[(&str, usize, bool)] = &[
@@ -467,6 +476,219 @@ const COLOR_DATA_12: &[(&str, usize, bool)] = &[
     ("WB_RGGBLevelsFlash", 0x87, true),
     ("ColorTempFlash", 0x8b, false),
 ];
+
+fn filter_info(bytes: &[u8], le: bool, tags: &mut Vec<Tag>) {
+    if bytes.len() < 8 {
+        return;
+    }
+    let count = read_u32(&bytes[4..8], le) as usize;
+    let mut pos = 8usize;
+    for _ in 0..count.min(64) {
+        if pos + 12 > bytes.len() {
+            break;
+        }
+        let size = read_u32(&bytes[pos + 4..pos + 8], le) as usize;
+        let params = read_u32(&bytes[pos + 8..pos + 12], le) as usize;
+        let next = pos.saturating_add(4).saturating_add(size);
+        if next > bytes.len() {
+            break;
+        }
+        pos += 12;
+        for _ in 0..params.min(64) {
+            if pos + 8 > bytes.len() {
+                break;
+            }
+            let id = read_u32(&bytes[pos..pos + 4], le);
+            let values = read_u32(&bytes[pos + 4..pos + 8], le) as usize;
+            pos += 8;
+            let mut raw = Vec::new();
+            for _ in 0..values.min(64) {
+                if pos + 4 > bytes.len() {
+                    break;
+                }
+                raw.push(read_signed(&bytes[pos..pos + 4], le));
+                pos += 4;
+            }
+            let Some(name) = filter_name(id) else {
+                continue;
+            };
+            let first = raw.first().copied().unwrap_or(0);
+            let mut tag = Tag::new("MakerNotes", "Canon", name, Value::Int(first));
+            if id == 0x402 {
+                tag = tag.with_print(if first == 0 { "Horizontal" } else { "Vertical" });
+            } else if (0x101..=0x701).contains(&id) && id % 0x100 == 1 {
+                let print = if first == -1 {
+                    "Off".to_string()
+                } else {
+                    format!("On ({first})")
+                };
+                tag = tag.with_print(print);
+            }
+            tags.push(tag);
+        }
+        pos = next;
+    }
+}
+
+fn filter_name(id: u32) -> Option<&'static str> {
+    Some(match id {
+        0x101 => "GrainyBWFilter",
+        0x201 => "SoftFocusFilter",
+        0x301 => "ToyCameraFilter",
+        0x401 => "MiniatureFilter",
+        0x402 => "MiniatureFilterOrientation",
+        0x403 => "MiniatureFilterPosition",
+        0x404 => "MiniatureFilterParameter",
+        0x501 => "FisheyeFilter",
+        0x601 => "PaintingFilter",
+        0x701 => "WatercolorFilter",
+        _ => return None,
+    })
+}
+
+fn level_info(bytes: &[u8], le: bool, tags: &mut Vec<Tag>) {
+    for def in tables().defs_in_table("Canon", "Canon::LevelInfo") {
+        let Ok(index) = def.id.parse::<usize>() else {
+            continue;
+        };
+        let Some(chunk) = bytes.get(index * 4..index * 4 + 4) else {
+            continue;
+        };
+        let mut value = read_signed(chunk, le);
+        let tag_value = match def.name {
+            "RollAngle" => {
+                if value > 1800 {
+                    value -= 3600;
+                }
+                Value::Float(-(value as f64) / 10.0)
+            }
+            "PitchAngle" => {
+                if value > 1800 {
+                    value -= 3600;
+                }
+                Value::Float((value as f64) / 10.0)
+            }
+            "FocalLength" | "MinFocalLength2" | "MaxFocalLength2" => {
+                let mm = (value as f64) / 10.0;
+                let mut text = format!("{mm:.1}");
+                if text.ends_with(".0") {
+                    text.truncate(text.len() - 2);
+                }
+                Value::Str(format!("{text} mm"))
+            }
+            _ => Value::Int(value),
+        };
+        tags.push(Tag::new("MakerNotes", "Canon", def.name, tag_value));
+    }
+}
+
+fn read_u32(bytes: &[u8], le: bool) -> u32 {
+    if le {
+        u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])
+    } else {
+        u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])
+    }
+}
+
+fn track4_metadata(data: &[u8], tags: &mut Vec<Tag>) {
+    let Some(moov) = child(data, b"moov") else {
+        return;
+    };
+    let traks: Vec<_> = boxes(moov.payload)
+        .into_iter()
+        .filter(|item| &item.kind == b"trak")
+        .collect();
+    let Some(trak) = traks.get(3) else {
+        return;
+    };
+    let Some(mdia) = child(trak.payload, b"mdia") else {
+        return;
+    };
+    let Some(minf) = child(mdia.payload, b"minf") else {
+        return;
+    };
+    let Some(stbl) = child(minf.payload, b"stbl") else {
+        return;
+    };
+    let Some(stsd) = child(stbl.payload, b"stsd") else {
+        return;
+    };
+    let entries = boxes(stsd.payload.get(8..).unwrap_or_default());
+    let Some(entry) = entries.first() else {
+        return;
+    };
+    if &entry.kind != b"CTMD" {
+        return;
+    }
+    let Some(sample) = first_sample(stbl.payload, data) else {
+        return;
+    };
+    let mut seen = std::collections::BTreeSet::new();
+    for (start, window) in sample.windows(4).enumerate() {
+        if window != b"II*\0" && window != b"MM\0*" {
+            continue;
+        }
+        let Some(tiff) = Tiff::at(sample, start) else {
+            continue;
+        };
+        let Some(offset) = tiff.first_ifd_offset() else {
+            continue;
+        };
+        let mut parsed = Vec::new();
+        let mut warnings = Vec::new();
+        makernotes::parse_canon_at(&sample[start..], offset, &mut parsed, &mut warnings, false);
+        for mut tag in parsed {
+            if !seen.insert(tag.name) {
+                continue;
+            }
+            tag.group0 = "MakerNotes";
+            tag.group1 = "Track4";
+            tags.push(tag);
+        }
+        let mut exif_tags = Vec::new();
+        let mut warnings = Vec::new();
+        exif::parse(
+            &sample[start..],
+            window == b"II*\0",
+            &mut exif_tags,
+            &mut warnings,
+            false,
+        );
+        for tag in exif_tags {
+            if !matches!(tag.name, "FocalLength" | "ISO" | "ExifByteOrder") {
+                continue;
+            }
+            if !seen.insert(tag.name) {
+                continue;
+            }
+            let mut tag = tag;
+            tag.group0 = "Track4";
+            tag.group1 = "Track4";
+            tags.push(tag);
+        }
+    }
+    let scale = media_timescale(data);
+    if let Some(stts) = child(stbl.payload, b"stts")
+        && let (Some(count), Some(delta)) = (at32(stts.payload, 4), at32(stts.payload, 8))
+        && count > 0
+        && delta > 0
+    {
+        tags.push(Tag::new(
+            "QuickTime",
+            "Track4",
+            "SampleTime",
+            Value::Str("0 s".to_string()),
+        ));
+        if scale > 0 {
+            tags.push(Tag::new(
+                "QuickTime",
+                "Track4",
+                "SampleDuration",
+                Value::Str(format!("{:.2} s", delta as f64 / scale as f64)),
+            ));
+        }
+    }
+}
 
 pub(crate) fn canon_tables(payload: &[u8], ifd_offset: u32, tags: &mut Vec<Tag>, numeric: bool) {
     let Some(tiff) = Tiff::new(payload) else {
@@ -497,7 +719,17 @@ pub(crate) fn canon_tables(payload: &[u8], ifd_offset: u32, tags: &mut Vec<Tag>,
             0x4020 => int32_table(bytes, tiff.le, "Canon::Ambience", tags, numeric, false),
             0x4021 => int32_table(bytes, tiff.le, "Canon::MultiExp", tags, numeric, false),
             0x4025 => int32_table(bytes, tiff.le, "Canon::HDRInfo", tags, numeric, false),
+            0x4024 => filter_info(bytes, tiff.le, tags),
             0x4028 => int32_table(bytes, tiff.le, "Canon::AFConfig", tags, numeric, false),
+            0x4053 => int32_table(
+                bytes,
+                tiff.le,
+                "Canon::FocusBracketingInfo",
+                tags,
+                numeric,
+                false,
+            ),
+            0x4059 => level_info(bytes, tiff.le, tags),
             0x99 => canon_custom(bytes, tiff.le, tags, numeric),
             0x4013 => af_micro_adj(bytes, tiff.le, tags, numeric),
             0x4019 => {
@@ -1460,6 +1692,26 @@ fn movie_timescale(data: &[u8]) -> u32 {
         .unwrap_or(0)
 }
 
+fn media_timescale(data: &[u8]) -> u32 {
+    let Some(moov) = child(data, b"moov") else {
+        return 0;
+    };
+    let Some(trak) = boxes(moov.payload)
+        .into_iter()
+        .filter(|item| &item.kind == b"trak")
+        .nth(3)
+    else {
+        return 0;
+    };
+    trak.payload
+        .split(|byte| *byte == 0)
+        .next()
+        .and_then(|_| child(trak.payload, b"mdia"))
+        .and_then(|mdia| child(mdia.payload, b"mdhd"))
+        .and_then(|mdhd| at32(mdhd.payload, 12))
+        .unwrap_or(0)
+}
+
 fn language_code(raw: u16) -> String {
     let mut text = String::new();
     for shift in [10, 5, 0] {
@@ -1544,5 +1796,46 @@ mod color_data_tests {
         let mut tags = Vec::new();
         color_data(&bytes, true, &mut tags, false);
         assert!(tags.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod cr3_track4_tests {
+    use super::*;
+
+    #[test]
+    fn parses_filter_info_and_level_info() {
+        let mut filters = vec![0u8; 36];
+        filters[4..8].copy_from_slice(&1u32.to_le_bytes());
+        filters[8..12].copy_from_slice(&1u32.to_le_bytes());
+        filters[12..16].copy_from_slice(&16u32.to_le_bytes());
+        filters[16..20].copy_from_slice(&1u32.to_le_bytes());
+        filters[20..24].copy_from_slice(&0x101u32.to_le_bytes());
+        filters[24..28].copy_from_slice(&1u32.to_le_bytes());
+        filters[28..32].copy_from_slice(&(-1i32).to_le_bytes());
+        let mut tags = Vec::new();
+        filter_info(&filters, true, &mut tags);
+        let filter = tags
+            .iter()
+            .find(|tag| tag.name == "GrainyBWFilter")
+            .unwrap();
+        assert_eq!(filter.value.display(), "-1");
+        assert_eq!(filter.print.as_deref(), Some("Off"));
+
+        let mut level = vec![0u8; 40];
+        level[16..20].copy_from_slice(&(-3i32).to_le_bytes());
+        level[20..24].copy_from_slice(&317i32.to_le_bytes());
+        level[32..36].copy_from_slice(&180i32.to_le_bytes());
+        let mut tags = Vec::new();
+        level_info(&level, true, &mut tags);
+        let roll = tags.iter().find(|tag| tag.name == "RollAngle").unwrap();
+        assert!(matches!(&roll.value, Value::Float(value) if (*value - 0.3).abs() < 0.001));
+        let pitch = tags.iter().find(|tag| tag.name == "PitchAngle").unwrap();
+        assert!(matches!(&pitch.value, Value::Float(value) if (*value - 31.7).abs() < 0.001));
+        let min = tags
+            .iter()
+            .find(|tag| tag.name == "MinFocalLength2")
+            .unwrap();
+        assert_eq!(min.value.display(), "18 mm");
     }
 }
