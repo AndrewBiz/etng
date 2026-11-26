@@ -266,7 +266,7 @@ fn binary_scalars_are_raw_and_unseparated() {
             "-b",
             "-Make",
             "-Orientation",
-            corpus("real/Canon_40D.jpg").to_str().unwrap(),
+            corpus("synthetic/thumb.jpg").to_str().unwrap(),
         ])
         .output()
         .unwrap();
@@ -281,7 +281,7 @@ fn binary_selection_order_follows_arguments() {
             "-b",
             "-Model",
             "-Make",
-            corpus("real/Canon_40D.jpg").to_str().unwrap(),
+            corpus("synthetic/thumb.jpg").to_str().unwrap(),
         ])
         .output()
         .unwrap();
@@ -295,12 +295,12 @@ fn binary_extracts_jpeg_thumbnail() {
         .args([
             "-b",
             "-ThumbnailImage",
-            corpus("real/Canon_40D.jpg").to_str().unwrap(),
+            corpus("synthetic/thumb.jpg").to_str().unwrap(),
         ])
         .output()
         .unwrap();
     assert!(output.status.success());
-    assert_eq!(output.stdout.len(), 1378);
+    assert_eq!(output.stdout.len(), 4393);
     assert_eq!(&output.stdout[..2], &[0xFF, 0xD8]);
     assert_eq!(&output.stdout[output.stdout.len() - 2..], &[0xFF, 0xD9]);
 }
@@ -328,7 +328,7 @@ fn binary_json_uses_base64_prefix() {
             "-j",
             "-b",
             "-ThumbnailImage",
-            corpus("real/Canon_40D.jpg").to_str().unwrap(),
+            corpus("synthetic/thumb.jpg").to_str().unwrap(),
         ])
         .output()
         .unwrap();
@@ -345,7 +345,7 @@ fn default_json_keeps_binary_placeholder() {
         .args([
             "-j",
             "-ThumbnailImage",
-            corpus("real/Canon_40D.jpg").to_str().unwrap(),
+            corpus("synthetic/thumb.jpg").to_str().unwrap(),
         ])
         .output()
         .unwrap();
@@ -353,7 +353,7 @@ fn default_json_keeps_binary_placeholder() {
     let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(
         json[0]["ThumbnailImage"],
-        "(Binary data 1378 bytes, use -b option to extract)"
+        "(Binary data 4393 bytes, use -b option to extract)"
     );
 }
 
@@ -399,7 +399,7 @@ fn csv_selected_columns_follow_arguments_and_case() {
             "-csv",
             "-model",
             "-make",
-            corpus("real/Canon_40D.jpg").to_str().unwrap(),
+            corpus("synthetic/thumb.jpg").to_str().unwrap(),
         ])
         .output()
         .unwrap();
@@ -418,7 +418,7 @@ fn csv_group_prefix_and_values() {
             "-G1",
             "-Make",
             "-Orientation",
-            corpus("real/Canon_40D.jpg").to_str().unwrap(),
+            corpus("synthetic/thumb.jpg").to_str().unwrap(),
         ])
         .output()
         .unwrap();
@@ -439,7 +439,7 @@ fn csv_union_header_is_alphabetical_and_missing_cells_are_empty() {
     let output = Command::new(bin())
         .args([
             "-csv",
-            corpus("real/Canon_40D.jpg").to_str().unwrap(),
+            corpus("synthetic/thumb.jpg").to_str().unwrap(),
             corpus("synthetic/base.jpg").to_str().unwrap(),
         ])
         .output()
@@ -470,7 +470,7 @@ fn csv_quotes_values_with_commas_and_quotes() {
         .args([
             "-csv",
             "-ComponentsConfiguration",
-            corpus("real/Canon_40D.jpg").to_str().unwrap(),
+            corpus("synthetic/thumb.jpg").to_str().unwrap(),
         ])
         .output()
         .unwrap();
@@ -486,7 +486,7 @@ fn csv_binary_values_use_base64() {
             "-csv",
             "-b",
             "-ThumbnailImage",
-            corpus("real/Canon_40D.jpg").to_str().unwrap(),
+            corpus("synthetic/thumb.jpg").to_str().unwrap(),
         ])
         .output()
         .unwrap();
@@ -504,7 +504,7 @@ fn csv_numeric_mode_and_precedence_over_json() {
             "-n",
             "-Orientation",
             "-FileSize",
-            corpus("real/Canon_40D.jpg").to_str().unwrap(),
+            corpus("synthetic/thumb.jpg").to_str().unwrap(),
         ])
         .output()
         .unwrap();
@@ -513,12 +513,12 @@ fn csv_numeric_mode_and_precedence_over_json() {
     let mut lines = text.lines();
     assert_eq!(lines.next(), Some("SourceFile,Orientation,FileSize"));
     let row = lines.next().unwrap();
-    assert!(row.ends_with(",1,7958"), "{row}");
+    assert!(row.ends_with(",1,8893"), "{row}");
 }
 
 #[test]
 fn exclude_removes_fields_and_columns() {
-    let file = corpus("real/Canon_40D.jpg");
+    let file = corpus("synthetic/thumb.jpg");
     let json = Command::new(bin())
         .args([
             "-j",
@@ -556,7 +556,7 @@ fn exclude_group_is_supported() {
             "-j",
             "-x",
             "IFD0:Make",
-            corpus("real/Canon_40D.jpg").to_str().unwrap(),
+            corpus("synthetic/thumb.jpg").to_str().unwrap(),
         ])
         .output()
         .unwrap();
@@ -572,7 +572,7 @@ fn unknown_exclude_is_not_a_usage_error() {
             "-j",
             "-x",
             "NoSuchTag",
-            corpus("real/Canon_40D.jpg").to_str().unwrap(),
+            corpus("synthetic/thumb.jpg").to_str().unwrap(),
         ])
         .output()
         .unwrap();

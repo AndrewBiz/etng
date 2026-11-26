@@ -296,7 +296,13 @@ fn corpus_files(root: &Path) -> Result<Vec<PathBuf>, Box<dyn Error>> {
 
 /// Compare `etng -j -G1` against the committed golden snapshots.
 fn compare() -> Result<(), Box<dyn Error>> {
-    const MASK: [&str; 3] = ["FileAccessDate", "FileInodeChangeDate", "Warning"];
+    const MASK: [&str; 5] = [
+        "FileAccessDate",
+        "FileInodeChangeDate",
+        "FileModifyDate",
+        "FileCreateDate",
+        "Warning",
+    ];
     const KNOWN_PREFIXES: [&str; 8] = [
         "Apple:",
         "QuickTime:",

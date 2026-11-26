@@ -12,6 +12,7 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
+  TZ: Europe/Moscow
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -61,5 +62,11 @@ jobs:
         with:
           toolchain: 1.92.0
       - uses: Swatinem/rust-cache@v2
+      - name: Install exiftool 13.55
+        run: |
+          curl -fsSL https://github.com/exiftool/exiftool/archive/refs/tags/13.55.tar.gz \
+            | tar xz -C "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/exiftool-13.55" >> "$GITHUB_PATH"
+          "$RUNNER_TEMP/exiftool-13.55/exiftool" -ver
       - run: cargo build --workspace
       - run: cargo run -q -p xtask -- compare
