@@ -995,3 +995,43 @@ fn writes_xmp_and_iptc_createdate() {
     assert_eq!(json[0]["XMP-xmp:CreateDate"], "2024:05:06 07:08:09");
     assert_eq!(json[0]["IPTC:DigitalCreationDate"], 20240506);
 }
+
+#[test]
+fn creates_xmp_and_iptc_dates_when_absent() {
+    let dir = temp_dir("sidecar-create");
+    fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("no-sidecars.jpg");
+    fs::copy(corpus("phtools/dates/7filemodifydate.JPG"), &path).unwrap();
+
+    let output = Command::new(bin())
+        .args(["-AllDates=2024:05:06 07:08:09", path.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let read = Command::new(bin())
+        .args([
+            "-j",
+            "-G1",
+            "-XMP-photoshop:DateCreated",
+            "-XMP-xmp:CreateDate",
+            "-XMP-xmp:ModifyDate",
+            "-IPTC:DateCreated",
+            "-IPTC:TimeCreated",
+            "-IPTC:DigitalCreationDate",
+            path.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&read.stdout).unwrap();
+    assert_eq!(json[0]["XMP-photoshop:DateCreated"], "2024:05:06 07:08:09");
+    assert_eq!(json[0]["XMP-xmp:CreateDate"], "2024:05:06 07:08:09");
+    assert_eq!(json[0]["XMP-xmp:ModifyDate"], "2024:05:06 07:08:09");
+    assert_eq!(json[0]["IPTC:DateCreated"], 20240506);
+    assert_eq!(json[0]["IPTC:TimeCreated"], "070809+0000");
+    assert_eq!(json[0]["IPTC:DigitalCreationDate"], 20240506);
+}

@@ -1,13 +1,19 @@
 //! XMP and IPTC date updates for JPEG sidecar metadata.
 //!
 //! The EXIF writer handles the TIFF payload. This module updates matching
-//! XMP properties and IPTC IIM datasets in the surrounding JPEG segments.
+//! XMP properties and IPTC IIM datasets in the surrounding JPEG segments. If a
+//! packet is absent it creates a minimal one containing the requested dates.
 
 const XMP_SIG: &[u8] = b"http://ns.adobe.com/xap/1.0/\0";
 const PHOTOSHOP_SIG: &[u8] = b"Photoshop 3.0\0";
 const IPTC_RESOURCE: u16 = 0x0404;
+const XMP_NS: &str = "http://ns.adobe.com/xap/1.0/";
+const PHOTOSHOP_NS: &str = "http://ns.adobe.com/photoshop/1.0/";
 
 pub fn update(data: &[u8], dates: &[(String, String)]) -> Result<Option<Vec<u8>>, String> {
+    if !data.starts_with(&[0xFF, 0xD8]) {
+        return Ok(None);
+    }
     let mut out = data.to_vec();
     let mut changed = false;
     if let Some(next) = update_xmp(&out, dates)? {
@@ -70,9 +76,32 @@ fn replace_segment(
     Ok(out)
 }
 
+fn insert_segment(data: &[u8], at: usize, marker: u8, payload: &[u8]) -> Result<Vec<u8>, String> {
+    let new_length = payload.len() + 2;
+    if new_length > u16::MAX as usize {
+        return Err("metadata segment too large".to_string());
+    }
+    let mut out = Vec::with_capacity(data.len() + payload.len() + 4);
+    out.extend_from_slice(&data[..at]);
+    out.extend_from_slice(&[0xFF, marker]);
+    out.extend_from_slice(&(new_length as u16).to_be_bytes());
+    out.extend_from_slice(payload);
+    out.extend_from_slice(&data[at..]);
+    Ok(out)
+}
+
+fn xmp_property(name: &str) -> Option<&'static str> {
+    match name {
+        "DateTimeOriginal" => Some("photoshop:DateCreated"),
+        "CreateDate" => Some("xmp:CreateDate"),
+        "ModifyDate" => Some("xmp:ModifyDate"),
+        _ => None,
+    }
+}
+
 fn update_xmp(data: &[u8], dates: &[(String, String)]) -> Result<Option<Vec<u8>>, String> {
     let Some((marker, length)) = find_segment(data, 0xE1, XMP_SIG) else {
-        return Ok(None);
+        return create_xmp(data, dates);
     };
     let payload = &data[marker + 2..marker + length];
     let xml_bytes = payload
@@ -82,13 +111,9 @@ fn update_xmp(data: &[u8], dates: &[(String, String)]) -> Result<Option<Vec<u8>>
         .map_err(|_| "XMP packet is not valid UTF-8".to_string())?;
     let mut changed = false;
     for (name, value) in dates {
-        let property = match name.as_str() {
-            "DateTimeOriginal" => "photoshop:DateCreated",
-            "CreateDate" => "xmp:CreateDate",
-            "ModifyDate" => "xmp:ModifyDate",
-            _ => continue,
-        };
-        changed |= set_xmp_value(&mut xml, property, &iso_date(value));
+        if let Some(property) = xmp_property(name) {
+            changed |= set_xmp_value(&mut xml, property, &iso_date(value));
+        }
     }
     if !changed {
         return Ok(None);
@@ -96,6 +121,35 @@ fn update_xmp(data: &[u8], dates: &[(String, String)]) -> Result<Option<Vec<u8>>
     let mut new_payload = XMP_SIG.to_vec();
     new_payload.extend_from_slice(xml.as_bytes());
     replace_segment(data, marker, length, &new_payload).map(Some)
+}
+
+fn create_xmp(data: &[u8], dates: &[(String, String)]) -> Result<Option<Vec<u8>>, String> {
+    let mut properties = String::new();
+    for (name, value) in dates {
+        let Some(property) = xmp_property(name) else {
+            continue;
+        };
+        properties.push_str(&format!(
+            "   <{property}>{}</{property}>\n",
+            iso_date(value)
+        ));
+    }
+    if properties.is_empty() {
+        return Ok(None);
+    }
+    let xml = format!(
+        "<?xpacket begin='\u{feff}' id='W5M0MpCehiHzreSzNTczkc9d'?>\n\
+         <x:xmpmeta xmlns:x='adobe:ns:meta/'>\n\
+         <rdf:RDF xmlns:rdf='http://www.w3.org/1999/02/22-rdf-syntax-ns#'>\n\
+         <rdf:Description rdf:about='' xmlns:photoshop='{PHOTOSHOP_NS}' xmlns:xmp='{XMP_NS}'>\n\
+         {properties}</rdf:Description>\n\
+         </rdf:RDF>\n\
+         </x:xmpmeta>\n\
+         <?xpacket end='w'?>"
+    );
+    let mut payload = XMP_SIG.to_vec();
+    payload.extend_from_slice(xml.as_bytes());
+    insert_segment(data, 2, 0xE1, &payload).map(Some)
 }
 
 fn iso_date(value: &str) -> String {
@@ -122,62 +176,196 @@ fn set_xmp_value(xml: &mut String, property: &str, value: &str) -> bool {
             return true;
         }
     }
-    // Add the property to an existing rdf:Description that declares its namespace.
     let prefix = property.split(':').next().unwrap_or(property);
     let namespace = format!("xmlns:{prefix}=");
-    let Some(ns_pos) = xml.find(&namespace) else {
+    let existing = xml.find(&namespace).and_then(|ns_pos| {
+        xml[ns_pos..]
+            .find("</rdf:Description>")
+            .map(|close| ns_pos + close)
+    });
+    if let Some(at) = existing {
+        xml.insert_str(at, &format!("\n  <{property}>{value}</{property}>\n "));
+        return true;
+    }
+    let Some(rdf_close) = xml.find("</rdf:RDF>") else {
         return false;
     };
-    let Some(close) = xml[ns_pos..].find("</rdf:Description>") else {
-        return false;
+    let uri = match prefix {
+        "photoshop" => PHOTOSHOP_NS,
+        "xmp" => XMP_NS,
+        _ => return false,
     };
-    let at = ns_pos + close;
-    let insert = format!("\n  <{property}>{value}</{property}>\n ");
-    xml.insert_str(at, &insert);
+    let description = format!(
+        "\n <rdf:Description rdf:about='' xmlns:{prefix}='{uri}'>\n  <{property}>{value}</{property}>\n </rdf:Description>\n"
+    );
+    xml.insert_str(rdf_close, &description);
     true
 }
 
 fn update_iptc(data: &[u8], dates: &[(String, String)]) -> Result<Option<Vec<u8>>, String> {
-    let Some((marker, length)) = find_segment(data, 0xED, PHOTOSHOP_SIG) else {
-        return Ok(None);
-    };
-    let payload = &data[marker + 2..marker + length];
-    let block = payload
-        .strip_prefix(PHOTOSHOP_SIG)
-        .ok_or_else(|| "invalid Photoshop segment".to_string())?;
-    let Some((iim_start, iim_len)) = find_iptc_resource(block) else {
-        return Ok(None);
-    };
-    let mut updated = block.to_vec();
-    let iim = &block[iim_start..iim_start + iim_len];
-    let mut changed = false;
-    for (name, value) in dates {
-        let (date_dataset, time_dataset) = match name.as_str() {
-            "DateTimeOriginal" => (Some(55), Some(60)),
-            "CreateDate" => (Some(62), Some(63)),
-            _ => (None, None),
+    if let Some((marker, length)) = find_segment(data, 0xED, PHOTOSHOP_SIG) {
+        let payload = &data[marker + 2..marker + length];
+        let block = payload
+            .strip_prefix(PHOTOSHOP_SIG)
+            .ok_or_else(|| "invalid Photoshop segment".to_string())?;
+        let existing =
+            find_iptc_resource(block).and_then(|(start, size)| block.get(start..start + size));
+        let Some((iim, changed)) = merge_iim(existing.unwrap_or_default(), dates) else {
+            return Ok(None);
         };
-        if let Some(dataset) = date_dataset {
-            changed |= set_iim_value(
-                &mut updated,
-                iim_start,
-                iim_len,
-                iim,
-                dataset,
-                &iptc_date(value),
-            );
+        if !changed {
+            return Ok(None);
         }
-        if let Some(dataset) = time_dataset {
-            let time = iptc_time(value, iim_time_suffix(iim, dataset));
-            changed |= set_iim_value(&mut updated, iim_start, iim_len, iim, dataset, &time);
-        }
+        let new_block = rebuild_block(block, &iim)?;
+        let mut new_payload = PHOTOSHOP_SIG.to_vec();
+        new_payload.extend_from_slice(&new_block);
+        return replace_segment(data, marker, length, &new_payload).map(Some);
     }
+    let Some((iim, changed)) = merge_iim(&[], dates) else {
+        return Ok(None);
+    };
     if !changed {
         return Ok(None);
     }
-    let mut new_payload = PHOTOSHOP_SIG.to_vec();
-    new_payload.extend_from_slice(&updated);
-    replace_segment(data, marker, length, &new_payload).map(Some)
+    let mut payload = PHOTOSHOP_SIG.to_vec();
+    payload.extend_from_slice(&make_resource(&iim));
+    insert_segment(data, 2, 0xED, &payload).map(Some)
+}
+
+fn merge_iim(existing: &[u8], dates: &[(String, String)]) -> Option<(Vec<u8>, bool)> {
+    let mut records = parse_iim(existing);
+    let mut changed = false;
+    for (name, value) in dates {
+        let (date, time) = match name.as_str() {
+            "DateTimeOriginal" => (Some(55u8), Some(60u8)),
+            "CreateDate" => (Some(62u8), Some(63u8)),
+            _ => (None, None),
+        };
+        if let Some(dataset) = date {
+            changed |= set_record(&mut records, dataset, iptc_date(value).into_bytes());
+        }
+        if let Some(dataset) = time {
+            let suffix = time_suffix(&records, dataset);
+            changed |= set_record(&mut records, dataset, iptc_time(value, suffix).into_bytes());
+        }
+    }
+    if !changed {
+        return None;
+    }
+    Some((build_iim(&records), true))
+}
+
+fn parse_iim(data: &[u8]) -> Vec<(u8, u8, Vec<u8>)> {
+    let mut records = Vec::new();
+    let mut pos = 0usize;
+    while pos + 5 <= data.len() {
+        if data[pos] != 0x1C {
+            pos += 1;
+            continue;
+        }
+        let record = data[pos + 1];
+        let dataset = data[pos + 2];
+        let size = u16::from_be_bytes([data[pos + 3], data[pos + 4]]) as usize;
+        let start = pos + 5;
+        let end = start.saturating_add(size);
+        if end > data.len() {
+            break;
+        }
+        records.push((record, dataset, data[start..end].to_vec()));
+        pos = end;
+    }
+    records
+}
+
+fn set_record(records: &mut Vec<(u8, u8, Vec<u8>)>, dataset: u8, value: Vec<u8>) -> bool {
+    if let Some(record) = records
+        .iter_mut()
+        .find(|(record, current, _)| *record == 2 && *current == dataset)
+    {
+        if record.2 == value {
+            return false;
+        }
+        record.2 = value;
+        return true;
+    }
+    records.push((2, dataset, value));
+    true
+}
+
+fn time_suffix(records: &[(u8, u8, Vec<u8>)], dataset: u8) -> String {
+    records
+        .iter()
+        .find(|(record, current, _)| *record == 2 && *current == dataset)
+        .and_then(|(_, _, value)| value.get(6..))
+        .filter(|suffix| suffix.first() == Some(&b'+') || suffix.first() == Some(&b'-'))
+        .map(|suffix| String::from_utf8_lossy(suffix).to_string())
+        .unwrap_or_else(|| "+00:00".to_string())
+}
+
+fn build_iim(records: &[(u8, u8, Vec<u8>)]) -> Vec<u8> {
+    let mut out = Vec::new();
+    for (record, dataset, value) in records {
+        out.extend_from_slice(&[0x1C, *record, *dataset]);
+        out.extend_from_slice(&(value.len() as u16).to_be_bytes());
+        out.extend_from_slice(value);
+    }
+    out
+}
+
+fn make_resource(iim: &[u8]) -> Vec<u8> {
+    let mut out = b"8BIM".to_vec();
+    out.extend_from_slice(&IPTC_RESOURCE.to_be_bytes());
+    out.extend_from_slice(&[0, 0]);
+    out.extend_from_slice(&(iim.len() as u32).to_be_bytes());
+    out.extend_from_slice(iim);
+    if iim.len() & 1 == 1 {
+        out.push(0);
+    }
+    out
+}
+
+fn rebuild_block(block: &[u8], iim: &[u8]) -> Result<Vec<u8>, String> {
+    let mut out = Vec::new();
+    let mut pos = 0usize;
+    let mut replaced = false;
+    while pos + 12 <= block.len() {
+        if &block[pos..pos + 4] != b"8BIM" {
+            pos += 1;
+            continue;
+        }
+        let resource = u16::from_be_bytes([block[pos + 4], block[pos + 5]]);
+        let name_len = block[pos + 6] as usize;
+        let name_total = if name_len.is_multiple_of(2) {
+            name_len + 2
+        } else {
+            name_len + 1
+        };
+        let size_pos = pos + 6 + name_total;
+        if size_pos + 4 > block.len() {
+            return Err("truncated Photoshop resource".to_string());
+        }
+        let size = u32::from_be_bytes([
+            block[size_pos],
+            block[size_pos + 1],
+            block[size_pos + 2],
+            block[size_pos + 3],
+        ]) as usize;
+        let end = size_pos + 4 + size;
+        if end + (size & 1) > block.len() {
+            return Err("truncated Photoshop resource".to_string());
+        }
+        if resource == IPTC_RESOURCE {
+            out.extend_from_slice(&make_resource(iim));
+            replaced = true;
+        } else {
+            out.extend_from_slice(&block[pos..end + (size & 1)]);
+        }
+        pos = end + (size & 1);
+    }
+    if !replaced {
+        out.extend_from_slice(&make_resource(iim));
+    }
+    Ok(out)
 }
 
 fn find_iptc_resource(block: &[u8]) -> Option<(usize, usize)> {
@@ -215,62 +403,6 @@ fn find_iptc_resource(block: &[u8]) -> Option<(usize, usize)> {
         pos = end + (size & 1);
     }
     None
-}
-
-fn set_iim_value(
-    block: &mut [u8],
-    iim_start: usize,
-    iim_len: usize,
-    iim: &[u8],
-    dataset: u8,
-    value: &str,
-) -> bool {
-    let mut pos = 0usize;
-    while pos + 5 <= iim_len {
-        if iim[pos] != 0x1C {
-            pos += 1;
-            continue;
-        }
-        let record = iim[pos + 1];
-        let current = iim[pos + 2];
-        let size = u16::from_be_bytes([iim[pos + 3], iim[pos + 4]]) as usize;
-        let start = pos + 5;
-        let end = start.saturating_add(size);
-        if end > iim_len {
-            return false;
-        }
-        if record == 2 && current == dataset && value.len() == size {
-            block[iim_start + start..iim_start + end].copy_from_slice(value.as_bytes());
-            return true;
-        }
-        pos = end;
-    }
-    false
-}
-
-fn iim_time_suffix(iim: &[u8], dataset: u8) -> String {
-    let mut pos = 0usize;
-    while pos + 5 <= iim.len() {
-        if iim[pos] != 0x1C {
-            pos += 1;
-            continue;
-        }
-        let size = u16::from_be_bytes([iim[pos + 3], iim[pos + 4]]) as usize;
-        let start = pos + 5;
-        let end = start.saturating_add(size);
-        if end > iim.len() {
-            break;
-        }
-        if iim[pos + 1] == 2 && iim[pos + 2] == dataset && size >= 11 {
-            let suffix = &iim[start + 6..end];
-            if suffix.first() == Some(&b'+') || suffix.first() == Some(&b'-') {
-                return String::from_utf8_lossy(suffix).to_string();
-            }
-            return "+00:00".to_string();
-        }
-        pos = end;
-    }
-    "+00:00".to_string()
 }
 
 fn iptc_date(value: &str) -> String {
@@ -325,5 +457,25 @@ mod tests {
             "2024-05-06T07:08:09"
         ));
         assert!(xml.contains("2024-05-06T07:08:09"));
+    }
+
+    #[test]
+    fn creates_missing_property_description() {
+        let mut xml =
+            "<rdf:RDF><rdf:Description rdf:about=''></rdf:Description></rdf:RDF>".to_string();
+        assert!(set_xmp_value(
+            &mut xml,
+            "xmp:CreateDate",
+            "2024-05-06T07:08:09"
+        ));
+        assert!(xml.contains("xmlns:xmp="));
+        assert!(xml.contains("<xmp:CreateDate>"));
+    }
+
+    #[test]
+    fn adds_missing_iim_dataset() {
+        let mut records = vec![(2, 55, b"20020202".to_vec())];
+        assert!(set_record(&mut records, 60, b"070809+0200".to_vec()));
+        assert!(build_iim(&records).windows(3).any(|w| w == [0x1C, 2, 60]));
     }
 }
