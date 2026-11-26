@@ -106,8 +106,9 @@ etng -ver                              # версия совместимости
 
 ## Ограничения
 
-- **CR3 / Canon:** ColorData для JPEG/CR2 (версии 32/33/34/48/64/65) уже читается;
-  FilterInfo, полный CanonCustom и ColorData в CR3 Track4 ещё не разобраны,
+- **CR3 / Canon:** ColorData для JPEG/CR2 (версии 32/33/34/48/64/65), CTMD
+  Track4, FilterInfo, FocusBracketing и LevelInfo уже читаются; полный
+  CanonCustom и сложные Composite ещё не разобраны,
   поэтому в режиме `auto` JSON и CSV для CR3 заменяются выводом exiftool, чтобы
   не терять теги. `--fallback=never` показывает нативный набор, `-b` никогда не
   делегирует.

@@ -498,6 +498,8 @@ pub(crate) fn push_post_composites(tags: &mut Vec<Tag>) {
         );
     }
 
+    push_generic_composites(tags);
+
     let latitude = find_f64(tags, "GPSLatitude");
     let longitude = find_f64(tags, "GPSLongitude");
     let latitude_ref = find_str(tags, "GPSLatitudeRef")
@@ -620,6 +622,101 @@ fn find_str(tags: &[Tag], name: &str) -> Option<String> {
             Value::Str(text) => Some(text.clone()),
             _ => None,
         })
+}
+
+fn push_generic_composites(tags: &mut Vec<Tag>) {
+    if !tags.iter().any(|tag| tag.group1 == "Track4") {
+        return;
+    }
+    let has = |tags: &[Tag], name: &str| {
+        tags.iter()
+            .any(|tag| tag.group1 == "Composite" && tag.name == name)
+    };
+    if let Some(iso) = tags
+        .iter()
+        .find(|tag| tag.name == "ISO" && tag.group1 != "Composite")
+        .and_then(|tag| tag.value.as_i64())
+        && !has(tags, "ISO")
+    {
+        tags.push(Tag::new("Composite", "Composite", "ISO", Value::Int(iso)));
+    }
+    if !has(tags, "Lens")
+        && let (Some(min), Some(max)) = (
+            find_str(tags, "MinFocalLength"),
+            find_str(tags, "MaxFocalLength"),
+        )
+        && let (Some(min), Some(max)) = (parse_mm(&min), parse_mm(&max))
+    {
+        let text = if (min - max).abs() < 0.01 {
+            format!("{min:.1} mm")
+        } else {
+            format!("{min:.1} - {max:.1} mm")
+        };
+        tags.push(Tag::new("Composite", "Composite", "Lens", Value::Str(text)));
+    }
+    if !has(tags, "Rotation")
+        && let Some(orientation) = find_str(tags, "Orientation")
+    {
+        let degrees = match orientation.as_str() {
+            "Rotate 90 CW" => 90,
+            "Rotate 180" => 180,
+            "Rotate 270 CW" => 270,
+            _ => 0,
+        };
+        tags.push(
+            Tag::new("Composite", "Composite", "Rotation", Value::Int(degrees))
+                .with_print(orientation),
+        );
+    }
+    if !has(tags, "WB_RGGBLevels")
+        && let Some(levels) = tags
+            .iter()
+            .find(|tag| tag.name == "WB_RGGBLevelsAsShot")
+            .and_then(|tag| match &tag.value {
+                Value::Str(text) => Some(text.clone()),
+                _ => None,
+            })
+        && let Some(values) = parse_levels(&levels)
+    {
+        tags.push(Tag::new(
+            "Composite",
+            "Composite",
+            "WB_RGGBLevels",
+            Value::Str(levels),
+        ));
+        if values[1] != 0 {
+            tags.push(Tag::new(
+                "Composite",
+                "Composite",
+                "RedBalance",
+                Value::Float(
+                    (values[0] as f64 / values[1] as f64 * 1_000_000.0).round() / 1_000_000.0,
+                ),
+            ));
+        }
+        if values[2] != 0 {
+            tags.push(Tag::new(
+                "Composite",
+                "Composite",
+                "BlueBalance",
+                Value::Float(
+                    (values[3] as f64 / values[2] as f64 * 1_000_000.0).round() / 1_000_000.0,
+                ),
+            ));
+        }
+    }
+}
+
+fn parse_mm(text: &str) -> Option<f64> {
+    text.split_whitespace().next()?.parse().ok()
+}
+
+fn parse_levels(text: &str) -> Option<[i64; 4]> {
+    let values: Vec<i64> = text
+        .split_whitespace()
+        .filter_map(|value| value.parse().ok())
+        .collect();
+    values.try_into().ok()
 }
 
 fn system_fields(path: &Path, metadata: &fs::Metadata) -> SystemFields {

@@ -79,8 +79,9 @@ tag parity.
 - **CR3 nested Canon tables**: native parsing now covers CameraSettings, ShotInfo,
   Processing, SensorInfo, FocalLength, AFMicroAdj, AFInfo/2, AFConfig,
   LightingOpt, VignettingCorr2, TimeInfo, MultiExp, HDRInfo and Ambience
-  (Canon 185 tags vs 183 in exiftool on `canon-r6.cr3`). CanonCustom values and
-  some Composite derivations are still approximate, so `auto` mode keeps the
+  (Canon 185 tags vs 183 in exiftool on `canon-r6.cr3`). CTMD Track4 is parsed
+  too, giving 548 of 577 exiftool tags on an R50 CR3 (was 393). CanonCustom and
+  complex Composite derivations are still approximate, so `auto` mode keeps the
   exiftool delegate for full JSON/CSV parity. `--fallback=never` exposes the
   native subset; `-b` never delegates.
 - **HEIC QuickTime**: `CompatibleBrands` is a string, not a JSON array;
