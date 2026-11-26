@@ -723,3 +723,28 @@ fn icc_profile_is_native_for_jpeg_and_heic() {
         );
     }
 }
+
+#[test]
+fn png_is_native_with_exif_and_png_chunks() {
+    let output = Command::new(bin())
+        .args([
+            "-j",
+            "-G1",
+            "--fallback=never",
+            corpus("synthetic/base.png").to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        !output.stdout.is_empty(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let object = json[0].as_object().unwrap();
+    assert_eq!(object["PNG:ImageWidth"], 64);
+    assert_eq!(object["PNG:ImageHeight"], 48);
+    assert_eq!(object["PNG:BitDepth"], 8);
+    assert_eq!(object["PNG:ColorType"], "RGB");
+    assert_eq!(object["IFD0:ImageWidth"], 64);
+}

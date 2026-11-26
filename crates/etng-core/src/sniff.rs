@@ -12,6 +12,8 @@ pub enum FileType {
     Arw,
     Nef,
     Heic,
+    Png,
+    Mov,
     Unknown,
 }
 
@@ -26,6 +28,8 @@ impl FileType {
             FileType::Arw => "ARW",
             FileType::Nef => "NEF",
             FileType::Heic => "HEIC",
+            FileType::Png => "PNG",
+            FileType::Mov => "MOV",
             FileType::Unknown => "Unknown",
         }
     }
@@ -40,6 +44,8 @@ impl FileType {
             FileType::Arw => "arw",
             FileType::Nef => "nef",
             FileType::Heic => "heic",
+            FileType::Png => "png",
+            FileType::Mov => "mov",
             FileType::Unknown => "",
         }
     }
@@ -54,6 +60,8 @@ impl FileType {
             FileType::Arw => "image/x-sony-arw",
             FileType::Nef => "image/x-nikon-nef",
             FileType::Heic => "image/heic",
+            FileType::Png => "image/png",
+            FileType::Mov => "video/quicktime",
             FileType::Unknown => "application/octet-stream",
         }
     }
@@ -77,6 +85,9 @@ pub fn detect_with_hint(data: &[u8], extension: Option<&str>) -> FileType {
     if data.starts_with(&[0xFF, 0xD8, 0xFF]) {
         return FileType::Jpeg;
     }
+    if data.starts_with(&[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A]) {
+        return FileType::Png;
+    }
     if data.len() >= 16 && &data[4..8] == b"ftyp" {
         let brand = &data[8..12];
         if HEIC_BRANDS.iter().any(|b| *b == brand) {
@@ -84,6 +95,9 @@ pub fn detect_with_hint(data: &[u8], extension: Option<&str>) -> FileType {
         }
         if brand == b"crx " {
             return FileType::Cr3;
+        }
+        if matches!(brand, b"qt  " | b"isom" | b"mp42" | b"3gp4" | b"M4V ") {
+            return FileType::Mov;
         }
         return FileType::Unknown;
     }
