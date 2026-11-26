@@ -173,6 +173,12 @@ fn patch_bmff_dates(data: &[u8], updates: &[(String, String)]) -> Result<Vec<u8>
                 }
             }
             if !applied {
+                if kind == FileType::Heic {
+                    return insert_heic_dates(data, updates);
+                }
+                if kind == FileType::Cr3 {
+                    return insert_cr3_dates(data, updates);
+                }
                 return Err(format!("{}: {name} tag not found in EXIF", kind.name()));
             }
         }
@@ -181,6 +187,144 @@ fn patch_bmff_dates(data: &[u8], updates: &[(String, String)]) -> Result<Vec<u8>
         patch_movie_header_dates(&mut out, updates, kind == FileType::Cr3)?;
     }
     Ok(out)
+}
+
+fn insert_heic_dates(data: &[u8], updates: &[(String, String)]) -> Result<Vec<u8>, String> {
+    let info = heic::exif_info(data).ok_or_else(|| "HEIC: EXIF item not found".to_string())?;
+    let tiff = data
+        .get(info.tiff_start..info.tiff_start + info.tiff_len)
+        .ok_or_else(|| "HEIC: invalid EXIF range".to_string())?;
+    let new_tiff = insert_dates(tiff, updates)?;
+    let prefix = data
+        .get(info.item_start..info.tiff_start)
+        .ok_or_else(|| "HEIC: invalid EXIF prefix".to_string())?;
+    let suffix = data
+        .get(info.tiff_start + info.tiff_len..info.item_start + info.item_len)
+        .ok_or_else(|| "HEIC: invalid EXIF suffix".to_string())?;
+    let mut new_item = Vec::with_capacity(prefix.len() + new_tiff.len() + suffix.len());
+    new_item.extend_from_slice(prefix);
+    new_item.extend_from_slice(&new_tiff);
+    new_item.extend_from_slice(suffix);
+    let total = new_item.len() + 8;
+    if total > u32::MAX as usize {
+        return Err("HEIC: EXIF item too large".to_string());
+    }
+    let mut out = data.to_vec();
+    let item_offset = out.len() + 8;
+    out.extend_from_slice(&(total as u32).to_be_bytes());
+    out.extend_from_slice(b"mdat");
+    out.extend_from_slice(&new_item);
+    heic::set_exif_location(
+        &mut out,
+        info.item_id,
+        item_offset as u64,
+        new_item.len() as u64,
+    )?;
+    Ok(out)
+}
+
+fn insert_cr3_dates(data: &[u8], updates: &[(String, String)]) -> Result<Vec<u8>, String> {
+    let mut out = data.to_vec();
+    let groups: [(&[u8; 4], &[&str]); 2] = [
+        (b"CMT2", &["DateTimeOriginal", "CreateDate"]),
+        (b"CMT1", &["ModifyDate"]),
+    ];
+    for (kind, names) in groups {
+        let subset: Vec<(String, String)> = updates
+            .iter()
+            .filter(|(name, _)| names.contains(&name.as_str()))
+            .cloned()
+            .collect();
+        if subset.is_empty() {
+            continue;
+        }
+        let Some((start, size, header)) = find_box_any(&out, kind) else {
+            continue;
+        };
+        let old_end = start + size;
+        let payload = out
+            .get(start + header..old_end)
+            .ok_or_else(|| "CR3: invalid CMT payload".to_string())?;
+        let new_payload = insert_dates(payload, &subset)?;
+        if new_payload.len() == payload.len() {
+            out[start + header..old_end].copy_from_slice(&new_payload);
+            continue;
+        }
+        let new_size = header + new_payload.len();
+        if new_size > u32::MAX as usize {
+            return Err("CR3: CMT box too large".to_string());
+        }
+        let delta = new_size as isize - size as isize;
+        out.splice(old_end..old_end, std::iter::repeat_n(0u8, delta as usize));
+        out[start..start + 4].copy_from_slice(&(new_size as u32).to_be_bytes());
+        out[start + header..start + new_size].copy_from_slice(&new_payload);
+        let Some((moov_start, moov_size, moov_header)) = find_box(&out, b"moov") else {
+            return Err("CR3: moov not found".to_string());
+        };
+        if moov_start <= start && start < moov_start + moov_size {
+            let new_moov = (moov_size as isize + delta) as u32;
+            out[moov_start..moov_start + 4].copy_from_slice(&new_moov.to_be_bytes());
+            let _ = moov_header;
+        }
+        shift_chunk_offsets(&mut out, old_end, delta)?;
+    }
+    Ok(out)
+}
+
+fn shift_chunk_offsets(data: &mut [u8], insertion: usize, delta: isize) -> Result<(), String> {
+    let mut pos = 0usize;
+    while pos + 8 <= data.len() {
+        let kind = &data[pos + 4..pos + 8];
+        if kind != b"stco" && kind != b"co64" {
+            let size = u32::from_be_bytes([data[pos], data[pos + 1], data[pos + 2], data[pos + 3]])
+                as usize;
+            pos += if size >= 8 { size } else { 1 };
+            continue;
+        }
+        let size =
+            u32::from_be_bytes([data[pos], data[pos + 1], data[pos + 2], data[pos + 3]]) as usize;
+        if size < 16 || pos + size > data.len() {
+            pos += 1;
+            continue;
+        }
+        let count = u32::from_be_bytes([
+            data[pos + 12],
+            data[pos + 13],
+            data[pos + 14],
+            data[pos + 15],
+        ]) as usize;
+        let width = if kind == b"stco" { 4 } else { 8 };
+        for index in 0..count {
+            let at = pos + 16 + index * width;
+            if at + width > pos + size {
+                break;
+            }
+            let old = read_be(&data[at..at + width]);
+            if old as usize >= insertion {
+                let new = (old as isize + delta) as u64;
+                write_be_bytes(&mut data[at..at + width], new)?;
+            }
+        }
+        pos += size;
+    }
+    Ok(())
+}
+
+fn read_be(bytes: &[u8]) -> u64 {
+    bytes
+        .iter()
+        .fold(0u64, |value, byte| (value << 8) | *byte as u64)
+}
+
+fn write_be_bytes(bytes: &mut [u8], value: u64) -> Result<(), String> {
+    let width = bytes.len();
+    if width > 8 {
+        return Err("invalid offset width".to_string());
+    }
+    for (index, byte) in bytes.iter_mut().enumerate() {
+        *byte = (value >> (8 * (width - index - 1))) as u8;
+    }
+    Ok(())
 }
 
 fn patch_movie_header_dates(
@@ -241,6 +385,21 @@ fn qt_seconds(value: &str, local_time: bool) -> Result<u64, String> {
     };
     let seconds = timestamp + 2_082_844_800;
     u64::try_from(seconds).map_err(|_| "date is before 1904".to_string())
+}
+
+fn find_box_any(data: &[u8], kind: &[u8; 4]) -> Option<(usize, usize, usize)> {
+    let mut pos = 0usize;
+    while pos + 8 <= data.len() {
+        if &data[pos + 4..pos + 8] == kind {
+            let size = u32::from_be_bytes([data[pos], data[pos + 1], data[pos + 2], data[pos + 3]])
+                as usize;
+            if size >= 8 && pos + size <= data.len() {
+                return Some((pos, size, 8));
+            }
+        }
+        pos += 1;
+    }
+    None
 }
 
 fn find_box(data: &[u8], kind: &[u8; 4]) -> Option<(usize, usize, usize)> {
@@ -409,6 +568,16 @@ fn insert_dates(data: &[u8], updates: &[(String, String)]) -> Result<Vec<u8>, St
         match insert_exif_dates(&patched, &exif_updates) {
             Ok(value) => patched = value,
             Err(err) if err.contains("no missing ExifIFD dates") => {}
+            Err(err) if err.contains("ExifIFD pointer not found") => {
+                for (name, value) in &exif_updates {
+                    let tag = match name.as_str() {
+                        "DateTimeOriginal" => 0x9003,
+                        "CreateDate" => 0x9004,
+                        _ => continue,
+                    };
+                    patched = set_ifd0_string(&patched, tag, value)?;
+                }
+            }
             Err(err) => return Err(err),
         }
     }
