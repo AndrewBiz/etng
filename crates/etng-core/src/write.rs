@@ -77,8 +77,119 @@ pub fn write(path: &Path, assignments: &[(String, String)]) -> Result<usize, Str
 
 fn insert_dates(path: &Path, updates: &[(String, String)]) -> Result<(), String> {
     let data = fs::read(path).map_err(|err| format!("{}: {err}", path.display()))?;
-    let patched = insert_exif_dates(&data, updates)?;
+    let mut patched = data.clone();
+    let exif_updates: Vec<(String, String)> = updates
+        .iter()
+        .filter(|(name, _)| name == "DateTimeOriginal" || name == "CreateDate")
+        .cloned()
+        .collect();
+    if !exif_updates.is_empty() {
+        match insert_exif_dates(&patched, &exif_updates) {
+            Ok(value) => patched = value,
+            Err(err) if err.contains("no missing ExifIFD dates") => {}
+            Err(err) => return Err(err),
+        }
+    }
+    if let Some((_, value)) = updates.iter().find(|(name, _)| name == "ModifyDate") {
+        patched = set_modify_date(&patched, value)?;
+    }
     atomic_replace(path, &patched)
+}
+
+fn set_modify_date(data: &[u8], value: &str) -> Result<Vec<u8>, String> {
+    let bounds = exif_bounds(data).ok_or_else(|| "no EXIF/TIFF payload found".to_string())?;
+    let tiff = Tiff::at(data, bounds.base).ok_or_else(|| "invalid TIFF header".to_string())?;
+    let ifd = tiff
+        .first_ifd_offset()
+        .and_then(|offset| tiff.read_ifd(offset))
+        .ok_or_else(|| "cannot read IFD0".to_string())?;
+    if let Some(entry) = ifd.entries.iter().find(|entry| entry.tag == 0x0132) {
+        if entry.count < 20 {
+            return Err("ModifyDate is not a writable ASCII date".to_string());
+        }
+        let start = if entry.count <= 4 {
+            entry.entry_offset + 8
+        } else {
+            bounds.base + entry.value_or_offset as usize
+        };
+        if start + 19 > data.len() {
+            return Err("ModifyDate value is outside the file".to_string());
+        }
+        let mut out = data.to_vec();
+        out[start..start + 19].copy_from_slice(value.as_bytes());
+        out[start + 19] = 0;
+        return Ok(out);
+    }
+    let old_tiff = &data[bounds.base..bounds.end];
+    let aligned = old_tiff.len() + (old_tiff.len() & 1);
+    let count = ifd.entries.len() + 1;
+    let values_start = aligned + 2 + count * 12 + 4;
+    let mut appended = vec![0u8; values_start + 20 - aligned];
+    let write_u16 = |buffer: &mut [u8], at: usize, number: u16, le: bool| {
+        let raw = if le {
+            number.to_le_bytes()
+        } else {
+            number.to_be_bytes()
+        };
+        buffer[at..at + 2].copy_from_slice(&raw);
+    };
+    let write_u32 = |buffer: &mut [u8], at: usize, number: u32, le: bool| {
+        let raw = if le {
+            number.to_le_bytes()
+        } else {
+            number.to_be_bytes()
+        };
+        buffer[at..at + 4].copy_from_slice(&raw);
+    };
+    write_u16(&mut appended, 0, count as u16, tiff.le);
+    let mut entries = Vec::new();
+    for entry in &ifd.entries {
+        let start = entry.entry_offset;
+        let raw = data
+            .get(start..start + 12)
+            .ok_or_else(|| "IFD0 entry outside file".to_string())?;
+        entries.push((entry.tag, raw.to_vec()));
+    }
+    let mut entry = vec![0u8; 12];
+    write_u16(&mut entry, 0, 0x0132, tiff.le);
+    write_u16(&mut entry, 2, 2, tiff.le);
+    write_u32(&mut entry, 4, 20, tiff.le);
+    write_u32(&mut entry, 8, values_start as u32, tiff.le);
+    appended[values_start - aligned..values_start - aligned + 19].copy_from_slice(value.as_bytes());
+    entries.push((0x0132, entry));
+    entries.sort_by_key(|(tag, _)| *tag);
+    for (index, (_, raw)) in entries.iter().enumerate() {
+        let at = 2 + index * 12;
+        appended[at..at + 12].copy_from_slice(raw);
+    }
+    let next_at = 2 + count * 12;
+    write_u32(&mut appended, next_at, ifd.next, tiff.le);
+
+    let new_offset = aligned as u32;
+    let mut out = old_tiff.to_vec();
+    out.resize(aligned, 0);
+    out.extend_from_slice(&appended);
+    let offset_raw = if tiff.le {
+        new_offset.to_le_bytes()
+    } else {
+        new_offset.to_be_bytes()
+    };
+    out[4..8].copy_from_slice(&offset_raw);
+    if let Some((marker, length)) = bounds.segment {
+        let new_length = 2 + 6 + out.len();
+        if new_length > u16::MAX as usize {
+            return Err("EXIF segment too large after insertion".to_string());
+        }
+        let mut file = Vec::with_capacity(data.len() + appended.len());
+        file.extend_from_slice(&data[..marker + 2]);
+        file.extend_from_slice(&(new_length as u16).to_be_bytes());
+        file.extend_from_slice(b"Exif\0\0");
+        file.extend_from_slice(&out);
+        file.extend_from_slice(&data[marker + 2 + length..]);
+        Ok(file)
+    } else {
+        Ok(out)
+    }
 }
 
 fn insert_exif_dates(data: &[u8], updates: &[(String, String)]) -> Result<Vec<u8>, String> {

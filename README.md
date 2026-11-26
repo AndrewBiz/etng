@@ -116,8 +116,7 @@ etng -AllDates='2024:05:06 07:08:09' -FileModifyDate='2024:05:06 07:08:09' photo
 ## Ограничения
 
 - **Запись:** только даты и только JPEG/TIFF; HEIC/CR3/MOV не поддержаны.
-  `DateTimeOriginal`/`CreateDate` вставляются, `ModifyDate` — только
-  перезаписывается.
+  Все три EXIF-даты перезаписываются и вставляются при отсутствии.
 - **CR3 / Canon:** ColorData для JPEG/CR2 (версии 32/33/34/48/64/65), CTMD
   Track4, FilterInfo, FocusBracketing и LevelInfo уже читаются; полный
   CanonCustom и сложные Composite ещё не разобраны,
@@ -134,8 +133,8 @@ etng -AllDates='2024:05:06 07:08:09' -FileModifyDate='2024:05:06 07:08:09' photo
 ## Запись дат
 
 MVP пишет существующие даты и вставляет отсутствующие `DateTimeOriginal` и
-`CreateDate` в ExifIFD (JPEG/TIFF). `ModifyDate` при отсутствии пока не
-вставляется; `FileModifyDate` работает отдельно. Замена атомарная (temp + rename), права файла
+`CreateDate` в ExifIFD, а `ModifyDate` — в IFD0 (JPEG/TIFF). `AllDates`
+разворачивается в три тега; `FileModifyDate` работает отдельно. Замена атомарная (temp + rename), права файла
 сохраняются.
 
 Поддерживаемые цели: `DateTimeOriginal`, `CreateDate`, `ModifyDate`,
