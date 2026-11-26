@@ -165,7 +165,7 @@ fn tag_exists(selection: &str) -> bool {
 }
 
 pub const HELP: &str = "\
-etng — ExifTool нового поколения (read-only)
+etng — ExifTool нового поколения (чтение и запись дат)
 
 Usage: etng [OPTIONS] FILE|DIR|PATTERN...
 
