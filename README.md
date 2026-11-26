@@ -1,6 +1,7 @@
 # etng
 
 [![CI](https://github.com/AndrewBiz/etng/actions/workflows/ci.yml/badge.svg)](https://github.com/AndrewBiz/etng/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/AndrewBiz/etng?display_name=tag)](https://github.com/AndrewBiz/etng/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 ExifTool нового поколения: быстрый read-only CLI на Rust с выводом, совместимым
@@ -37,6 +38,21 @@ GitHub: https://github.com/AndrewBiz/etng · GitVerse: https://gitverse.ru/kazim
 - **Пакетная обработка:** параллельная, с детерминированным порядком вывода.
 
 ## Установка
+
+### Готовая сборка
+
+Linux x86_64, статический бинарник (musl), без зависимостей:
+
+```bash
+curl -LO https://github.com/AndrewBiz/etng/releases/download/v0.1.0/etng-0.1.0-x86_64-unknown-linux-musl.tar.gz
+tar xzf etng-0.1.0-x86_64-unknown-linux-musl.tar.gz
+install -m755 etng-0.1.0-x86_64-unknown-linux-musl/etng ~/.local/bin/etng
+```
+
+Контрольная сумма — в `.sha256` рядом с архивом. Все релизы:
+https://github.com/AndrewBiz/etng/releases
+
+### Из исходников
 
 ```bash
 git clone https://github.com/AndrewBiz/etng.git etng && cd etng
