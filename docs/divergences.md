@@ -104,7 +104,7 @@ tag parity.
 - Existing EXIF date fields are rewritten; missing `DateTimeOriginal`,
   `CreateDate` and `ModifyDate` are inserted (ExifIFD / IFD0).
 - Existing JPEG XMP/IPTC date fields are updated; missing XMP/IPTC packets are
-  not created.
+  created with the requested dates.
 - JPEG and TIFF-family containers only; HEIC/CR3/MOV writes are not implemented.
 - `FileModifyDate` uses local time and is set after the atomic file replacement.
 
