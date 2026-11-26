@@ -89,6 +89,8 @@ fn parse(data: &[u8], file_type: FileType, opts: &ReadOptions) -> ParseResult {
             parse_tiff(data, file_type, opts)
         }
         FileType::Heic => parse_heic(data, opts),
+        FileType::Png => parse_png(data, opts),
+        FileType::Mov => parse_mov(data, opts),
         FileType::Unknown => (
             Vec::new(),
             Vec::new(),
@@ -342,6 +344,34 @@ fn parse_heic(data: &[u8], opts: &ReadOptions) -> ParseResult {
     push_aperture(&mut tags);
     push_composite(&mut tags, width, height);
     push_post_composites(&mut tags);
+    (tags, warnings, None)
+}
+
+fn parse_mov(data: &[u8], opts: &ReadOptions) -> ParseResult {
+    let mut tags = Vec::new();
+    let warnings = Vec::new();
+    crate::mov::parse(data, &mut tags);
+    let _ = opts;
+    (tags, warnings, None)
+}
+
+fn parse_png(data: &[u8], opts: &ReadOptions) -> ParseResult {
+    let mut tags = Vec::new();
+    let mut warnings = Vec::new();
+    let dimensions = crate::png::parse(data, &mut tags, &mut warnings);
+    if tags.iter().any(|tag| tag.name == "ExifByteOrder") {
+        // already emitted by the embedded EXIF
+    } else if data.windows(4).any(|window| window == b"II*\0") {
+        push_byte_order(&mut tags, true);
+    } else if data.windows(4).any(|window| window == b"MM\0*") {
+        push_byte_order(&mut tags, false);
+    }
+    if let Some((width, height)) = dimensions {
+        push_aperture(&mut tags);
+        push_composite(&mut tags, Some(width), Some(height));
+        push_post_composites(&mut tags);
+    }
+    let _ = opts;
     (tags, warnings, None)
 }
 

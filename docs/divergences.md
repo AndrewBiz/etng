@@ -53,7 +53,10 @@ tag parity.
   still missing. Unknown vendors produce a warning and no tags.
 - **ARW** is detected via `Make=SONY` + extension; the first SubIFD and
   `PreviewImage` are read natively. The encrypted SR2SubIFD block and some Sony
-  binary tables are not decoded yet; PNG and video containers remain unsupported.
+  binary tables are not decoded yet.
+- **PNG** reads IHDR, eXIf, iTXt/tEXt XMP, sRGB and tIME natively.
+- **MOV** reads ftyp and the movie header (dates, duration, mdat); tracks and
+  codec tables are not covered. MTS/M2TS remains fallback-only.
 - **DNG/NEF/CR2 detection** uses the file extension to disambiguate TIFF-family
   containers when the signature alone is ambiguous (exiftool does the same for
   extension-based TIFF variants). CR2 preview tags (273/279) are re-interpreted

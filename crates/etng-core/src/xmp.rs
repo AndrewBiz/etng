@@ -83,7 +83,8 @@ pub fn parse(data: &[u8], out: &mut Vec<Tag>, warnings: &mut Vec<String>) {
                     element.items.join(", ")
                 };
                 if !value.is_empty() {
-                    values.push((element.prefix, element.local, value));
+                    let (prefix, local) = nested_name(&stack, &element.prefix, &element.local);
+                    values.push((prefix, local, value));
                 }
             }
             Ok(Event::Eof) => break,
@@ -97,8 +98,8 @@ pub fn parse(data: &[u8], out: &mut Vec<Tag>, warnings: &mut Vec<String>) {
     }
 
     for (prefix, local, value) in values {
-        let table = format!("XMP::{prefix}");
-        let Some(def) = tables().find_table_id(&table, &local) else {
+        let (table, id) = xmp_lookup(&prefix, &local);
+        let Some(def) = tables().find_table_id(&table, &id) else {
             continue;
         };
         let value = if def.typ == "date" {
@@ -120,6 +121,49 @@ pub fn parse(data: &[u8], out: &mut Vec<Tag>, warnings: &mut Vec<String>) {
         }
         out.push(tag);
     }
+}
+
+fn nested_name(stack: &[Elem], prefix: &str, local: &str) -> (String, String) {
+    if prefix == "Iptc4xmpExt"
+        && stack.iter().any(|element| element.local == "LocationShown")
+        && matches!(
+            local,
+            "City"
+                | "CountryCode"
+                | "CountryName"
+                | "ProvinceState"
+                | "Sublocation"
+                | "WorldRegion"
+                | "GPSLatitude"
+                | "GPSLongitude"
+                | "GPSAltitude"
+                | "GPSAltitudeRef"
+        )
+    {
+        return (prefix.to_string(), format!("LocationShown{local}"));
+    }
+    if prefix == "mwg-coll"
+        && stack.iter().any(|element| element.local == "Collections")
+        && matches!(local, "CollectionName" | "CollectionURI")
+    {
+        return (prefix.to_string(), local.to_string());
+    }
+    (prefix.to_string(), local.to_string())
+}
+
+fn xmp_lookup(prefix: &str, local: &str) -> (String, String) {
+    let table = match prefix {
+        "Iptc4xmpCore" => "XMP::iptcCore".to_string(),
+        "Iptc4xmpExt" => "XMP::iptcExt".to_string(),
+        "mwg-coll" => "MWG::Collections".to_string(),
+        _ => format!("XMP::{prefix}"),
+    };
+    let id = if prefix == "mwg-coll" {
+        format!("Collections{local}")
+    } else {
+        local.to_string()
+    };
+    (table, id)
 }
 
 fn split_name(name: &[u8]) -> (String, String) {
@@ -226,6 +270,38 @@ mod tests {
         assert_eq!(subject.value.display(), "night, city");
         let city = tags.iter().find(|t| t.name == "City").expect("City");
         assert_eq!(city.value.display(), "Москва");
+    }
+
+    #[test]
+    fn nested_location_and_collection_are_flattened() {
+        let packet = br#"<x:xmpmeta xmlns:x="adobe:ns:meta/">
+<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+ <rdf:Description rdf:about="" xmlns:Iptc4xmpExt="http://iptc.org/std/Iptc4xmpExt/2008-02-29/">
+  <Iptc4xmpExt:LocationShown><rdf:Bag><rdf:li rdf:parseType="Resource">
+   <Iptc4xmpExt:City>Brugge</Iptc4xmpExt:City>
+   <Iptc4xmpExt:CountryCode>BE</Iptc4xmpExt:CountryCode>
+   <Iptc4xmpExt:Sublocation>Grote Markt</Iptc4xmpExt:Sublocation>
+  </rdf:li></rdf:Bag></Iptc4xmpExt:LocationShown>
+ </rdf:Description>
+ <rdf:Description rdf:about="" xmlns:mwg-coll="http://www.metadataworkinggroup.com/schemas/collections/">
+  <mwg-coll:Collections><rdf:Bag><rdf:li rdf:parseType="Resource">
+   <mwg-coll:CollectionName>Belgium Brugge</mwg-coll:CollectionName>
+  </rdf:li></rdf:Bag></mwg-coll:Collections>
+ </rdf:Description>
+ </rdf:RDF></x:xmpmeta>"#;
+        let mut tags = Vec::new();
+        let mut warnings = Vec::new();
+        parse(packet, &mut tags, &mut warnings);
+        assert!(warnings.is_empty(), "{warnings:?}");
+        let names: Vec<(&str, &str)> = tags.iter().map(|tag| (tag.group1, tag.name)).collect();
+        assert!(
+            names.contains(&("XMP-iptcExt", "LocationShownCity")),
+            "{names:?}"
+        );
+        assert!(
+            names.contains(&("XMP-iptcExt", "LocationShownCountryCode")),
+            "{names:?}"
+        );
     }
 
     #[test]
