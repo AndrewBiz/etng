@@ -228,7 +228,99 @@ fn patch_bmff_dates(data: &[u8], updates: &[(String, String)]) -> Result<Vec<u8>
     if matches!(kind, FileType::Cr3 | FileType::Mov) {
         patch_movie_header_dates(&mut out, updates, kind == FileType::Cr3)?;
     }
+    if kind == FileType::Mov {
+        patch_apple_creation_date(&mut out, updates)?;
+    }
     Ok(out)
+}
+
+fn patch_apple_creation_date(data: &mut [u8], updates: &[(String, String)]) -> Result<(), String> {
+    let Some((start, len)) = find_apple_creation_date(data) else {
+        return Ok(());
+    };
+    let Some(value) = updates.iter().find_map(|(name, value)| {
+        matches!(name.as_str(), "DateTimeOriginal" | "CreateDate").then_some(value)
+    }) else {
+        return Ok(());
+    };
+    let old = String::from_utf8_lossy(&data[start..start + len])
+        .trim_end_matches('\0')
+        .to_string();
+    let date = NaiveDateTime::parse_from_str(value, "%Y:%m:%d %H:%M:%S")
+        .map_err(|_| format!("invalid Apple creation date {value}"))?;
+    let zone = old
+        .rfind(['+', '-'])
+        .filter(|index| old.len() - index == 5 && old[..*index].contains('T'))
+        .map(|index| &old[index..])
+        .unwrap_or("");
+    let replacement = format!("{}{zone}", date.format("%Y-%m-%dT%H:%M:%S"));
+    if replacement.len() > len {
+        return Err("Apple creation date is too long for existing metadata value".to_string());
+    }
+    data[start..start + len].fill(0);
+    data[start..start + replacement.len()].copy_from_slice(replacement.as_bytes());
+    Ok(())
+}
+
+fn find_apple_creation_date(data: &[u8]) -> Option<(usize, usize)> {
+    let (moov_start, moov_size, moov_header) = find_box(data, b"moov")?;
+    let moov_base = moov_start + moov_header;
+    let moov = data.get(moov_base..moov_start + moov_size)?;
+    let (meta_start, meta_size, meta_header) = find_box(moov, b"meta")?;
+    let meta_base = moov_base + meta_start + meta_header;
+    let meta_end = moov_base + meta_start + meta_size;
+    let meta = data.get(meta_base..meta_end)?;
+    let (keys_start, keys_size, keys_header) = find_box(meta, b"keys").or_else(|| {
+        meta.get(4..)
+            .and_then(|inner| find_box(inner, b"keys"))
+            .map(|(start, size, header)| (start + 4, size, header))
+    })?;
+    let keys =
+        data.get(meta_base + keys_start + keys_header..meta_base + keys_start + keys_size)?;
+    let count = u32::from_be_bytes(keys.get(4..8)?.try_into().ok()?) as usize;
+    let mut index = None;
+    let mut pos = 8usize;
+    for position in 1..=count {
+        let size = u32::from_be_bytes(keys.get(pos..pos + 4)?.try_into().ok()?) as usize;
+        if size < 8 || pos + size > keys.len() {
+            return None;
+        }
+        let name = &keys[pos + 8..pos + size];
+        let name = name.split(|byte| *byte == 0).next().unwrap_or(name);
+        if name == b"com.apple.quicktime.creationdate" {
+            index = Some(position as u32);
+            break;
+        }
+        pos += size;
+    }
+    let index = index?;
+    let (ilst_start, ilst_size, ilst_header) = find_box(meta, b"ilst").or_else(|| {
+        meta.get(4..)
+            .and_then(|inner| find_box(inner, b"ilst"))
+            .map(|(start, size, header)| (start + 4, size, header))
+    })?;
+    let ilst =
+        data.get(meta_base + ilst_start + ilst_header..meta_base + ilst_start + ilst_size)?;
+    let mut pos = 0usize;
+    while pos + 8 <= ilst.len() {
+        let item_size = u32::from_be_bytes(ilst.get(pos..pos + 4)?.try_into().ok()?) as usize;
+        if item_size < 8 || pos + item_size > ilst.len() {
+            return None;
+        }
+        let item_kind = u32::from_be_bytes(ilst.get(pos + 4..pos + 8)?.try_into().ok()?);
+        if item_kind == index {
+            let item = ilst.get(pos + 8..pos + item_size)?;
+            let (data_start, data_size, data_header) = find_box(item, b"data")?;
+            let value_start = pos + 8 + data_start + data_header + 8;
+            let value_len = data_size.checked_sub(data_header + 8)?;
+            return Some((
+                meta_base + ilst_start + ilst_header + value_start,
+                value_len,
+            ));
+        }
+        pos += item_size;
+    }
+    None
 }
 
 fn insert_heic_dates(data: &[u8], updates: &[(String, String)]) -> Result<Vec<u8>, String> {
