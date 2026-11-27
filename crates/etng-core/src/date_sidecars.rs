@@ -557,6 +557,7 @@ fn iptc_time(value: &str, suffix: String) -> String {
 const DC_NS: &str = "http://purl.org/dc/elements/1.1/";
 const IPTC_CORE_NS: &str = "http://iptc.org/std/Iptc4xmpCore/1.0/xmlns/";
 const IPTC_EXT_NS: &str = "http://iptc.org/std/Iptc4xmpExt/2008-02-29/";
+const MWG_COLL_NS: &str = "http://www.metadataworkinggroup.com/schemas/collections/";
 
 /// MWG text tags: XMP property, prefix, namespace, optional rdf container.
 fn text_xmp(
@@ -666,6 +667,14 @@ fn update_xmp_text(data: &[u8], entries: &[(String, String)]) -> Result<Option<V
         let kind = kind.unwrap_or("Bag");
         changed |= set_xmp_array(&mut xml, property, prefix, uri, kind, &values);
     }
+    let collections: Vec<String> = entries
+        .iter()
+        .filter(|(name, _)| name == "Collections")
+        .map(|(_, value)| value.clone())
+        .collect();
+    if !collections.is_empty() {
+        changed |= set_xmp_collections(&mut xml, &collections);
+    }
     if !changed {
         return Ok(None);
     }
@@ -716,6 +725,18 @@ fn create_xmp_text(data: &[u8], entries: &[(String, String)]) -> Result<Option<V
             "   <{property}><rdf:{kind}>{items}</rdf:{kind}></{property}>\n"
         ));
     }
+    let collections: Vec<&str> = entries
+        .iter()
+        .filter(|(name, _)| name == "Collections")
+        .map(|(_, value)| value.as_str())
+        .collect();
+    if !collections.is_empty() {
+        namespaces.push(("mwg-coll", MWG_COLL_NS));
+        body.push_str(&format!(
+            "   <mwg-coll:Collections>{}</mwg-coll:Collections>\n",
+            collections_content(&collections)
+        ));
+    }
     if body.is_empty() {
         return Ok(None);
     }
@@ -736,6 +757,45 @@ fn create_xmp_text(data: &[u8], entries: &[(String, String)]) -> Result<Option<V
     let mut payload = XMP_SIG.to_vec();
     payload.extend_from_slice(xml.as_bytes());
     insert_segment(data, 2, 0xE1, &payload).map(Some)
+}
+
+fn collections_content(values: &[impl AsRef<str>]) -> String {
+    let mut items = String::new();
+    for value in values {
+        let raw = value.as_ref();
+        if raw.is_empty() {
+            continue;
+        }
+        let (name, uri) = raw.split_once('|').unwrap_or((raw, ""));
+        items.push_str(&format!(
+            "<rdf:li rdf:parseType=\"Resource\"><mwg-coll:CollectionName>{}</mwg-coll:CollectionName><mwg-coll:CollectionURI>{}</mwg-coll:CollectionURI></rdf:li>",
+            escape_xml(name),
+            escape_xml(uri)
+        ));
+    }
+    format!("<rdf:Bag>{items}</rdf:Bag>")
+}
+
+fn set_xmp_collections(xml: &mut String, values: &[String]) -> bool {
+    let content = collections_content(values);
+    let open = "<mwg-coll:Collections";
+    if let Some(start) = xml.find(open) {
+        let Some(tag_end) = xml[start..].find('>') else {
+            return false;
+        };
+        let inner = start + tag_end + 1;
+        if let Some(close) = xml[inner..].find("</mwg-coll:Collections>") {
+            xml.replace_range(inner..inner + close, &content);
+            return true;
+        }
+    }
+    add_xmp_property(
+        xml,
+        "mwg-coll:Collections",
+        &content,
+        "mwg-coll",
+        MWG_COLL_NS,
+    )
 }
 
 fn set_xmp_array(
@@ -915,6 +975,15 @@ mod tests {
     fn coded_character_set_is_iptc_1_90() {
         assert_eq!(coded_charset_value("UTF8"), b"\x1b%G");
         assert_eq!(text_iim("CodedCharacterSet"), Some((1, 90)));
+    }
+
+    #[test]
+    fn collections_are_bag_of_structs() {
+        let xml = collections_content(&["Name|uri", "Two"]);
+        assert!(xml.starts_with("<rdf:Bag>"));
+        assert!(xml.contains("<mwg-coll:CollectionName>Name</mwg-coll:CollectionName>"));
+        assert!(xml.contains("<mwg-coll:CollectionURI>uri</mwg-coll:CollectionURI>"));
+        assert!(xml.contains("<mwg-coll:CollectionName>Two</mwg-coll:CollectionName>"));
     }
 
     #[test]

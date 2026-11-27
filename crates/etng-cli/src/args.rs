@@ -187,8 +187,9 @@ Options:
                    FileModifyDate, AllDates (JPEG/TIFF/HEIC/CR3/MOV);
                    MWG: City, Country, State, Location, Keywords, Creator,
                    Copyright, CountryCode, WorldRegion, CodedCharacterSet,
-                   ImageUniqueID; GPSLatitude, GPSLatitudeRef, GPSLongitude,
-                   GPSLongitudeRef, GPSAltitude, GPSAltitudeRef (JPEG).
+                   ImageUniqueID, Collections=name|uri; GPSLatitude,
+                   GPSLatitudeRef, GPSLongitude, GPSLongitudeRef, GPSAltitude,
+                   GPSAltitudeRef (JPEG).
                    Keywords/Creator можно повторять
   -ver             версия совместимости с exiftool
   -h, --help       эта справка
