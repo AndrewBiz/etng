@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.18.0 — 2026-11-27
+
+### GPS write
+
+- `GPSLatitude`/`GPSLongitude` — rational64u, refs N/S/E/W.
+- `GPSAltitude`/`GPSAltitudeRef`.
+- GPS IFD append-only; при отсутствии создаётся, указатель `0x8825`
+  добавляется в IFD0.
+- Поддержка десятичных градусов и DMS.
+- 121 тест.
+
 ## 0.17.0 — 2026-11-27
 
 ### Оставшиеся phtools-теги
