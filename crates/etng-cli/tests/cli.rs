@@ -1334,7 +1334,7 @@ fn writes_gps_tags() {
     let dir = temp_dir("gps-write");
     fs::create_dir_all(&dir).unwrap();
     let path = dir.join("gps.jpg");
-    fs::copy(corpus("real/Canon_40D.jpg"), &path).unwrap();
+    fs::copy(corpus("real/tif.tif"), &path).unwrap();
 
     let output = Command::new(bin())
         .args([
