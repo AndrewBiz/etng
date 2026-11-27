@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.25.1 — 2026-11-27
+
+### Исправлено
+
+- Sony JPEG с MPF: при росте APP13/XMP etng сдвигает MakerNote
+  `PreviewImage` offset. Устранён warning `Error reading PreviewImage`;
+  `Sony:PreviewImage` снова читается.
+
 ## 0.25.0 — 2026-11-27
 
 ### Аудит корпуса
