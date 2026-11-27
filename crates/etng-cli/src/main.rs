@@ -36,6 +36,15 @@ fn run() -> i32 {
         println!("{EXIFTOOL_COMPAT_VERSION}");
         return 0;
     }
+    if cli.list || cli.listw {
+        if let Err(err) = print_tag_list(cli.listw)
+            && err.kind() != io::ErrorKind::BrokenPipe
+        {
+            eprintln!("etng: cannot write output: {err}");
+            return 1;
+        }
+        return 0;
+    }
     if cli.inputs.is_empty() {
         eprintln!("etng: no input files");
         eprintln!("Try 'etng --help' for usage.");
@@ -286,6 +295,26 @@ fn selected_columns(opts: &ReadOptions) -> Vec<String> {
         }
     }
     columns
+}
+
+fn print_tag_list(writable: bool) -> io::Result<()> {
+    let tables = etng_tags::tables();
+    let mut names = BTreeSet::new();
+    for group in tables.groups() {
+        names.extend(tables.names_in_group(group));
+    }
+    let stdout = io::stdout();
+    let mut out = BufWriter::new(stdout.lock());
+    writeln!(
+        out,
+        "{} tags:",
+        if writable { "Writable" } else { "Available" }
+    )?;
+    let names: Vec<&str> = names.into_iter().collect();
+    for chunk in names.chunks(8) {
+        writeln!(out, "  {}", chunk.join(" "))?;
+    }
+    out.flush()
 }
 
 fn write_text(out: &mut impl Write, report: &FileReport, opts: &ReadOptions) -> io::Result<()> {

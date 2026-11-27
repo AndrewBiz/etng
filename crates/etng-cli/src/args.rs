@@ -12,6 +12,8 @@ pub struct Cli {
     pub inputs: Vec<String>,
     pub show_help: bool,
     pub show_version: bool,
+    pub list: bool,
+    pub listw: bool,
     pub writes: Vec<(String, String)>,
     fallback_explicit: bool,
 }
@@ -27,6 +29,8 @@ impl Cli {
             inputs: Vec::new(),
             show_help: false,
             show_version: false,
+            list: false,
+            listw: false,
             writes: Vec::new(),
             fallback_explicit: false,
         }
@@ -63,6 +67,8 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Cli, String> {
             "-r" => cli.recursive = true,
             "-overwrite_original" => {}
             "-ver" => cli.show_version = true,
+            "-list" => cli.list = true,
+            "-listw" => cli.listw = true,
             "-h" | "--help" => cli.show_help = true,
             "-ext" => {
                 let value = iter

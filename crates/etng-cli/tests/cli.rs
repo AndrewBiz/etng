@@ -1432,3 +1432,18 @@ fn writes_collections() {
     assert_eq!(json[0]["XMP-mwg-coll:CollectionName"], "Name 1");
     assert_eq!(json[0]["XMP-mwg-coll:CollectionURI"], "uri1");
 }
+
+#[test]
+fn lists_tags() {
+    let output = Command::new(bin()).arg("-list").output().unwrap();
+    assert!(output.status.success());
+    let text = String::from_utf8_lossy(&output.stdout);
+    assert!(text.starts_with("Available tags:"), "{text}");
+    assert!(text.contains("DateTimeOriginal"), "{text}");
+
+    let output = Command::new(bin()).arg("-listw").output().unwrap();
+    assert!(output.status.success());
+    let text = String::from_utf8_lossy(&output.stdout);
+    assert!(text.starts_with("Writable tags:"), "{text}");
+    assert!(text.contains("DateTimeOriginal"), "{text}");
+}
