@@ -101,4 +101,9 @@ jobs:
         env:
           PHTOOLS_DIR: ${{ github.workspace }}/phtools
           ETNG_SHIM_KEEP: "1"
-        run: ./tools/phtools-integration.sh
+        run: |
+          cargo build -q -p etng-cli
+          target/debug/etng -ver
+          target/debug/etng -j phtools/features/media/sony_jpg/DSC03403.JPG | wc -c
+          target/debug/etng -j phtools/features/media/sony_jpg/DSC03403.JPG | head -8
+          ./tools/phtools-integration.sh
