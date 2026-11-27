@@ -140,6 +140,8 @@ pub fn parse(data: &[u8], out: &mut Vec<Tag>) {
         }
     }
 
+    parse_apple_keys(&top, out);
+
     for atom in &top {
         if &atom.kind == b"mdat" {
             let total = atom.payload.len();
@@ -156,6 +158,115 @@ pub fn parse(data: &[u8], out: &mut Vec<Tag>) {
                 Value::Int((data.len() - total) as i64),
             ));
         }
+    }
+}
+
+fn parse_apple_keys(top: &[Atom<'_>], out: &mut Vec<Tag>) {
+    let Some(moov) = top.iter().find(|atom| &atom.kind == b"moov") else {
+        return;
+    };
+    let Some(meta) = find_descendant(moov.payload, b"meta", 2) else {
+        return;
+    };
+    let meta_payload = if atoms(meta).is_empty() && meta.len() > 4 {
+        &meta[4..]
+    } else {
+        meta
+    };
+    let Some(keys) = child(meta_payload, b"keys") else {
+        return;
+    };
+    let Some(ilst) = child(meta_payload, b"ilst") else {
+        return;
+    };
+    let names = parse_key_names(keys);
+    if names.is_empty() {
+        return;
+    }
+    for item in atoms(ilst) {
+        let index = u32::from_be_bytes(item.kind) as usize;
+        let Some(key) = names.get(index.saturating_sub(1)).map(String::as_str) else {
+            continue;
+        };
+        let Some(data) = child(item.payload, b"data") else {
+            continue;
+        };
+        if data.len() < 8 || be32(&data[..4]) != Some(1) {
+            continue;
+        }
+        let value = String::from_utf8_lossy(&data[8..])
+            .trim_end_matches('\0')
+            .to_string();
+        let (name, value) = match key {
+            "com.apple.quicktime.creationdate" => ("CreationDate", apple_date(&value)),
+            "com.apple.quicktime.make" => ("Make", value),
+            "com.apple.quicktime.model" => ("Model", value),
+            "com.apple.quicktime.software" => ("Software", value),
+            _ => continue,
+        };
+        if !value.is_empty() {
+            out.push(Tag::new("QuickTime", "Keys", name, Value::Str(value)));
+        }
+    }
+}
+
+fn find_descendant<'a>(data: &'a [u8], kind: &[u8; 4], depth: u8) -> Option<&'a [u8]> {
+    for atom in atoms(data) {
+        if &atom.kind == kind {
+            return Some(atom.payload);
+        }
+        if depth > 0
+            && matches!(&atom.kind, b"moov" | b"udta" | b"meta")
+            && let Some(found) = find_descendant(atom.payload, kind, depth - 1)
+        {
+            return Some(found);
+        }
+    }
+    None
+}
+
+fn parse_key_names(payload: &[u8]) -> Vec<String> {
+    let Some(count) = be32(payload.get(4..).unwrap_or_default()) else {
+        return Vec::new();
+    };
+    let mut names = Vec::new();
+    let mut pos = 8usize;
+    for _ in 0..count {
+        let Some(size) = be32(payload.get(pos..).unwrap_or_default()) else {
+            break;
+        };
+        let size = size as usize;
+        let end = pos.saturating_add(size);
+        if size < 8 || end > payload.len() {
+            break;
+        }
+        let name = String::from_utf8_lossy(&payload[pos + 8..end])
+            .trim_end_matches('\0')
+            .to_string();
+        names.push(name);
+        pos = end;
+    }
+    names
+}
+
+fn apple_date(raw: &str) -> String {
+    let raw = raw.trim();
+    let Some((date, time)) = raw.split_once('T') else {
+        return raw.replace('-', ":");
+    };
+    let date = date.replace('-', ":");
+    let (time, zone) = match time.rfind(['+', '-']) {
+        Some(index) if time.len() - index == 5 => (&time[..index], Some(&time[index..])),
+        _ => (time, None),
+    };
+    let time = time.split('.').next().unwrap_or(time);
+    match zone {
+        Some(zone) => {
+            let sign = &zone[..1];
+            let digits = &zone[1..];
+            format!("{date} {time}{sign}{}:{}", &digits[..2], &digits[2..])
+        }
+        None => format!("{date} {time}"),
     }
 }
 
@@ -222,5 +333,74 @@ mod tests {
         assert_eq!(get("CreateDate").as_deref(), Some("2017:01:06 02:04:06"));
         assert_eq!(get("Duration").as_deref(), Some("2.97 s"));
         assert_eq!(get("MediaDataSize").as_deref(), Some("4"));
+    }
+
+    #[test]
+    fn reads_apple_keys_creation_date() {
+        fn key(name: &str) -> Vec<u8> {
+            let mut out = Vec::new();
+            let size = 8 + name.len();
+            out.extend_from_slice(&(size as u32).to_be_bytes());
+            out.extend_from_slice(b"mdta");
+            out.extend_from_slice(name.as_bytes());
+            out
+        }
+        fn data(value: &str) -> Vec<u8> {
+            let mut out = Vec::new();
+            out.extend_from_slice(&1u32.to_be_bytes());
+            out.extend_from_slice(&0u32.to_be_bytes());
+            out.extend_from_slice(value.as_bytes());
+            atom(b"data", &out)
+        }
+
+        let keys = [
+            "com.apple.quicktime.make",
+            "com.apple.quicktime.model",
+            "com.apple.quicktime.software",
+            "com.apple.quicktime.creationdate",
+        ];
+        let mut keys_payload = vec![0u8; 4];
+        keys_payload.extend_from_slice(&(keys.len() as u32).to_be_bytes());
+        for name in keys {
+            keys_payload.extend_from_slice(&key(name));
+        }
+        let mut ilst_payload = Vec::new();
+        for (index, value) in [
+            "Apple",
+            "iPhone 6s Plus",
+            "14.4",
+            "2021-02-22T17:28:32+0300",
+        ]
+        .iter()
+        .enumerate()
+        {
+            ilst_payload
+                .extend_from_slice(&atom(&((index + 1) as u32).to_be_bytes(), &data(value)));
+        }
+        let meta = atom(
+            b"meta",
+            &[
+                atom(b"hdlr", &[0; 24]),
+                atom(b"keys", &keys_payload),
+                atom(b"ilst", &ilst_payload),
+            ]
+            .concat(),
+        );
+        let data = atom(b"moov", &meta);
+
+        let mut tags = Vec::new();
+        parse(&data, &mut tags);
+        let get = |name: &str| {
+            tags.iter()
+                .find(|tag| tag.name == name)
+                .map(|tag| (tag.group1, tag.value.display()))
+        };
+        assert_eq!(
+            get("CreationDate"),
+            Some(("Keys", "2021:02:22 17:28:32+03:00".to_string()))
+        );
+        assert_eq!(get("Make"), Some(("Keys", "Apple".to_string())));
+        assert_eq!(get("Model"), Some(("Keys", "iPhone 6s Plus".to_string())));
+        assert_eq!(get("Software"), Some(("Keys", "14.4".to_string())));
     }
 }
