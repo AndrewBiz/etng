@@ -20,7 +20,7 @@ pub const WRITABLE: [&str; 4] = [
     "FILEMODIFYDATE",
 ];
 
-pub const WRITABLE_TEXT: [&str; 7] = [
+pub const WRITABLE_TEXT: [&str; 12] = [
     "CITY",
     "COUNTRY",
     "STATE",
@@ -28,6 +28,11 @@ pub const WRITABLE_TEXT: [&str; 7] = [
     "KEYWORDS",
     "CREATOR",
     "COPYRIGHT",
+    "COUNTRYCODE",
+    "WORLDREGION",
+    "CODEDCHARSET",
+    "CODEDCHARACTERSET",
+    "IMAGEUNIQUEID",
 ];
 
 pub fn is_writable(name: &str) -> bool {
@@ -431,6 +436,105 @@ fn find_box(data: &[u8], kind: &[u8; 4]) -> Option<(usize, usize, usize)> {
     None
 }
 
+fn set_exif_string(data: &[u8], tag: u16, value: &str) -> Result<Vec<u8>, String> {
+    let bounds = exif_bounds(data).ok_or_else(|| "no EXIF/TIFF payload found".to_string())?;
+    let tiff = Tiff::at(data, bounds.base).ok_or_else(|| "invalid TIFF header".to_string())?;
+    let ifd0 = tiff
+        .first_ifd_offset()
+        .and_then(|offset| tiff.read_ifd(offset))
+        .ok_or_else(|| "cannot read IFD0".to_string())?;
+    let pointer = ifd0
+        .entries
+        .iter()
+        .find(|entry| entry.tag == 0x8769)
+        .ok_or_else(|| "ExifIFD pointer not found".to_string())?;
+    let exif_ifd = tiff
+        .read_ifd(pointer.value_or_offset)
+        .ok_or_else(|| "cannot read ExifIFD".to_string())?;
+    let bytes = value.as_bytes();
+    let count = bytes.len() + 1;
+    let mut tiff_data = data[bounds.base..bounds.end].to_vec();
+    let write_u32 = |buffer: &mut [u8], at: usize, number: u32| {
+        let raw = if tiff.le {
+            number.to_le_bytes()
+        } else {
+            number.to_be_bytes()
+        };
+        buffer[at..at + 4].copy_from_slice(&raw);
+    };
+    if let Some(entry) = exif_ifd.entries.iter().find(|entry| entry.tag == tag) {
+        let entry_at = entry.entry_offset.saturating_sub(bounds.base);
+        let old_count = entry.count as usize;
+        if count <= old_count
+            && (count <= 4 || entry.value_or_offset as usize + count <= tiff_data.len())
+        {
+            if count <= 4 {
+                tiff_data[entry_at + 8..entry_at + 12].fill(0);
+                tiff_data[entry_at + 8..entry_at + 8 + bytes.len()].copy_from_slice(bytes);
+            } else {
+                let at = entry.value_or_offset as usize;
+                tiff_data[at..at + bytes.len()].copy_from_slice(bytes);
+                tiff_data[at + bytes.len()] = 0;
+            }
+            write_u32(&mut tiff_data, entry_at + 4, count as u32);
+            return rebuild_tiff(data, bounds, tiff_data);
+        }
+        let aligned = tiff_data.len() + (tiff_data.len() & 1);
+        let at = aligned;
+        tiff_data.resize(aligned, 0);
+        tiff_data.extend_from_slice(bytes);
+        tiff_data.push(0);
+        write_u32(&mut tiff_data, entry_at + 4, count as u32);
+        write_u32(&mut tiff_data, entry_at + 8, at as u32);
+        return rebuild_tiff(data, bounds, tiff_data);
+    }
+
+    let aligned = tiff_data.len() + (tiff_data.len() & 1);
+    let total = exif_ifd.entries.len() + 1;
+    let values_start = aligned + 2 + total * 12 + 4;
+    let mut appended = vec![0u8; values_start + count - aligned];
+    let write_u16 = |buffer: &mut [u8], at: usize, number: u16| {
+        let raw = if tiff.le {
+            number.to_le_bytes()
+        } else {
+            number.to_be_bytes()
+        };
+        buffer[at..at + 2].copy_from_slice(&raw);
+    };
+    write_u16(&mut appended, 0, total as u16);
+    let mut entries = Vec::new();
+    for entry in &exif_ifd.entries {
+        let start = entry.entry_offset;
+        let raw = data
+            .get(start..start + 12)
+            .ok_or_else(|| "ExifIFD entry outside file".to_string())?;
+        entries.push((entry.tag, raw.to_vec()));
+    }
+    let mut entry = vec![0u8; 12];
+    write_u16(&mut entry, 0, tag);
+    write_u16(&mut entry, 2, 2);
+    write_u32(&mut entry, 4, count as u32);
+    write_u32(&mut entry, 8, values_start as u32);
+    appended[values_start - aligned..values_start - aligned + bytes.len()].copy_from_slice(bytes);
+    appended[values_start - aligned + bytes.len()] = 0;
+    entries.push((tag, entry));
+    entries.sort_by_key(|(tag, _)| *tag);
+    for (index, (_, raw)) in entries.iter().enumerate() {
+        let at = 2 + index * 12;
+        appended[at..at + 12].copy_from_slice(raw);
+    }
+    write_u32(&mut appended, 2 + total * 12, exif_ifd.next);
+    let new_offset = aligned as u32;
+    tiff_data.resize(aligned, 0);
+    tiff_data.extend_from_slice(&appended);
+    let pointer_at = pointer.entry_offset.saturating_sub(bounds.base) + 8;
+    if pointer_at + 4 > tiff_data.len() {
+        return Err("ExifIFD pointer outside TIFF".to_string());
+    }
+    write_u32(&mut tiff_data, pointer_at, new_offset);
+    rebuild_tiff(data, bounds, tiff_data)
+}
+
 fn apply_exif_text(data: &[u8], updates: &[(String, String)]) -> Result<Vec<u8>, String> {
     let mut out = data.to_vec();
     let creators: Vec<&str> = updates
@@ -443,6 +547,13 @@ fn apply_exif_text(data: &[u8], updates: &[(String, String)]) -> Result<Vec<u8>,
     }
     if let Some((_, value)) = updates.iter().rev().find(|(name, _)| name == "Copyright") {
         out = set_ifd0_string(&out, 0x8298, value)?;
+    }
+    if let Some((_, value)) = updates
+        .iter()
+        .rev()
+        .find(|(name, _)| name == "ImageUniqueID")
+    {
+        out = set_exif_string(&out, 0xA420, value)?;
     }
     Ok(out)
 }
@@ -829,6 +940,10 @@ fn title_case(name: &str) -> String {
         "KEYWORDS" => "Keywords".to_string(),
         "CREATOR" => "Creator".to_string(),
         "COPYRIGHT" => "Copyright".to_string(),
+        "COUNTRYCODE" => "CountryCode".to_string(),
+        "WORLDREGION" => "WorldRegion".to_string(),
+        "CODEDCHARSET" | "CODEDCHARACTERSET" => "CodedCharacterSet".to_string(),
+        "IMAGEUNIQUEID" => "ImageUniqueID".to_string(),
         other => other.to_string(),
     }
 }

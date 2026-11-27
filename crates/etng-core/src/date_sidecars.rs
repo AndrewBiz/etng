@@ -200,6 +200,7 @@ fn set_xmp_value(xml: &mut String, property: &str, value: &str) -> bool {
         "xmp" => XMP_NS,
         "dc" => DC_NS,
         "Iptc4xmpCore" => IPTC_CORE_NS,
+        "Iptc4xmpExt" => IPTC_EXT_NS,
         _ => return false,
     };
     let description = format!(
@@ -249,11 +250,16 @@ fn merge_iim(existing: &[u8], dates: &[(String, String)]) -> Option<(Vec<u8>, bo
             _ => (None, None),
         };
         if let Some(dataset) = date {
-            changed |= set_record(&mut records, dataset, iptc_date(value).into_bytes());
+            changed |= set_record(&mut records, 2, dataset, iptc_date(value).into_bytes());
         }
         if let Some(dataset) = time {
             let suffix = time_suffix(&records, dataset);
-            changed |= set_record(&mut records, dataset, iptc_time(value, suffix).into_bytes());
+            changed |= set_record(
+                &mut records,
+                2,
+                dataset,
+                iptc_time(value, suffix).into_bytes(),
+            );
         }
     }
     if !changed {
@@ -284,10 +290,15 @@ fn parse_iim(data: &[u8]) -> Vec<(u8, u8, Vec<u8>)> {
     records
 }
 
-fn set_record(records: &mut Vec<(u8, u8, Vec<u8>)>, dataset: u8, value: Vec<u8>) -> bool {
+fn set_record(
+    records: &mut Vec<(u8, u8, Vec<u8>)>,
+    record_id: u8,
+    dataset: u8,
+    value: Vec<u8>,
+) -> bool {
     if let Some(record) = records
         .iter_mut()
-        .find(|(record, current, _)| *record == 2 && *current == dataset)
+        .find(|(record, current, _)| *record == record_id && *current == dataset)
     {
         if record.2 == value {
             return false;
@@ -295,7 +306,7 @@ fn set_record(records: &mut Vec<(u8, u8, Vec<u8>)>, dataset: u8, value: Vec<u8>)
         record.2 = value;
         return true;
     }
-    records.push((2, dataset, value));
+    records.push((record_id, dataset, value));
     true
 }
 
@@ -545,6 +556,7 @@ fn iptc_time(value: &str, suffix: String) -> String {
 
 const DC_NS: &str = "http://purl.org/dc/elements/1.1/";
 const IPTC_CORE_NS: &str = "http://iptc.org/std/Iptc4xmpCore/1.0/xmlns/";
+const IPTC_EXT_NS: &str = "http://iptc.org/std/Iptc4xmpExt/2008-02-29/";
 
 /// MWG text tags: XMP property, prefix, namespace, optional rdf container.
 fn text_xmp(
@@ -563,6 +575,18 @@ fn text_xmp(
         "Keywords" => ("dc:subject", "dc", DC_NS, Some("Bag")),
         "Creator" => ("dc:creator", "dc", DC_NS, Some("Seq")),
         "Copyright" => ("dc:rights", "dc", DC_NS, None),
+        "CountryCode" => (
+            "Iptc4xmpExt:LocationShownCountryCode",
+            "Iptc4xmpExt",
+            IPTC_EXT_NS,
+            None,
+        ),
+        "WorldRegion" => (
+            "Iptc4xmpExt:LocationShownWorldRegion",
+            "Iptc4xmpExt",
+            IPTC_EXT_NS,
+            None,
+        ),
         _ => return None,
     })
 }
@@ -571,15 +595,16 @@ fn text_is_array(name: &str) -> bool {
     matches!(name, "Keywords" | "Creator")
 }
 
-fn text_dataset(name: &str) -> Option<u8> {
+fn text_iim(name: &str) -> Option<(u8, u8)> {
     Some(match name {
-        "Keywords" => 25,
-        "Creator" => 80,
-        "City" => 90,
-        "Location" => 92,
-        "State" => 95,
-        "Country" => 101,
-        "Copyright" => 116,
+        "CodedCharacterSet" => (1, 90),
+        "Keywords" => (2, 25),
+        "Creator" => (2, 80),
+        "City" => (2, 90),
+        "Location" => (2, 92),
+        "State" => (2, 95),
+        "Country" => (2, 101),
+        "Copyright" => (2, 116),
         _ => return None,
     })
 }
@@ -805,6 +830,13 @@ fn update_iptc_text(data: &[u8], entries: &[(String, String)]) -> Result<Option<
     insert_segment(data, 2, 0xED, &payload).map(Some)
 }
 
+fn coded_charset_value(value: &str) -> Vec<u8> {
+    match value.trim().to_ascii_uppercase().as_str() {
+        "UTF8" | "UTF-8" => b"\x1b%G".to_vec(),
+        _ => value.as_bytes().to_vec(),
+    }
+}
+
 fn merge_text_iim(existing: &[u8], entries: &[(String, String)]) -> Option<(Vec<u8>, bool)> {
     let mut records = parse_iim(existing);
     let mut changed = false;
@@ -817,17 +849,22 @@ fn merge_text_iim(existing: &[u8], entries: &[(String, String)]) -> Option<(Vec<
         }
     }
     for (name, values) in grouped {
-        let Some(dataset) = text_dataset(&name) else {
+        let Some((record_id, dataset)) = text_iim(&name) else {
             continue;
         };
         if text_is_array(&name) {
-            records.retain(|(record, current, _)| !(*record == 2 && *current == dataset));
+            records.retain(|(record, current, _)| !(*record == record_id && *current == dataset));
             for value in values {
-                records.push((2, dataset, value.into_bytes()));
+                records.push((record_id, dataset, value.into_bytes()));
             }
             changed = true;
         } else if let Some(value) = values.into_iter().next() {
-            changed |= set_record(&mut records, dataset, value.into_bytes());
+            let value = if name == "CodedCharacterSet" {
+                coded_charset_value(&value)
+            } else {
+                value.into_bytes()
+            };
+            changed |= set_record(&mut records, record_id, dataset, value);
         }
     }
     if !changed {
@@ -875,9 +912,15 @@ mod tests {
     }
 
     #[test]
+    fn coded_character_set_is_iptc_1_90() {
+        assert_eq!(coded_charset_value("UTF8"), b"\x1b%G");
+        assert_eq!(text_iim("CodedCharacterSet"), Some((1, 90)));
+    }
+
+    #[test]
     fn adds_missing_iim_dataset() {
         let mut records = vec![(2, 55, b"20020202".to_vec())];
-        assert!(set_record(&mut records, 60, b"070809+0200".to_vec()));
+        assert!(set_record(&mut records, 2, 60, b"070809+0200".to_vec()));
         assert!(build_iim(&records).windows(3).any(|w| w == [0x1C, 2, 60]));
     }
 }
