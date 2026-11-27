@@ -128,6 +128,7 @@ pub fn write(path: &Path, assignments: &[(String, String)]) -> Result<usize, Str
                 | FileType::Arw
                 | FileType::Nef
         ) {
+            let original_len = data.len();
             let mut patched = data.clone();
             match apply_exif(&mut patched, &exif_updates) {
                 Ok(()) => {}
@@ -139,6 +140,7 @@ pub fn write(path: &Path, assignments: &[(String, String)]) -> Result<usize, Str
             if let Some(updated) = date_sidecars::update(&patched, &exif_updates)? {
                 patched = updated;
             }
+            adjust_sony_preview_offsets(&mut patched, original_len);
             atomic_replace(path, &patched)?;
             written += exif_updates.len();
         } else {
@@ -169,7 +171,8 @@ pub fn write(path: &Path, assignments: &[(String, String)]) -> Result<usize, Str
         }
         let mut patched = apply_exif_text(&data, &text_updates)?;
         patched = apply_exif_gps(&patched, &gps_updates)?;
-        if let Some(updated) = date_sidecars::update_text(&patched, &text_updates)? {
+        if let Some(mut updated) = date_sidecars::update_text(&patched, &text_updates)? {
+            adjust_sony_preview_offsets(&mut updated, data.len());
             atomic_replace(path, &updated)?;
         } else if patched != data {
             atomic_replace(path, &patched)?;
@@ -232,6 +235,38 @@ fn patch_bmff_dates(data: &[u8], updates: &[(String, String)]) -> Result<Vec<u8>
         patch_apple_creation_date(&mut out, updates)?;
     }
     Ok(out)
+}
+
+fn adjust_sony_preview_offsets(data: &mut [u8], original_len: usize) {
+    let delta = data.len() as isize - original_len as isize;
+    if delta == 0 {
+        return;
+    }
+    let mut search = 0usize;
+    while let Some(relative) = data[search..]
+        .windows(8)
+        .position(|window| window == b"SONY DSC")
+    {
+        let start = search + relative;
+        let end = (start + 200_000).min(data.len());
+        let mut pos = start;
+        while pos + 12 <= end {
+            // Sony MakerNote tag 0x2001: PreviewImage, type undef[7].
+            if data[pos..pos + 2] == [0x01, 0x20] && data[pos + 2..pos + 4] == [0x07, 0x00] {
+                let old = u32::from_le_bytes(data[pos + 8..pos + 12].try_into().unwrap()) as isize;
+                // The preview lives in MPImage2, not inside the APP1 segment; only
+                // those offsets move when sidecar metadata grows.
+                if old >= original_len as isize / 2 {
+                    let new = old + delta;
+                    if new >= 0 && new as usize <= data.len() - 12 {
+                        data[pos + 8..pos + 12].copy_from_slice(&(new as u32).to_le_bytes());
+                    }
+                }
+            }
+            pos += 2;
+        }
+        search = start + 8;
+    }
 }
 
 fn patch_apple_creation_date(data: &mut [u8], updates: &[(String, String)]) -> Result<(), String> {
@@ -1547,5 +1582,22 @@ mod tests {
             "2024:05:06 07:08:09"
         );
         assert!(normalize_date("yesterday").is_err());
+    }
+
+    #[test]
+    fn shifts_sony_preview_offset_when_sidecars_grow() {
+        let mut data = vec![0u8; 200_000];
+        data[100..108].copy_from_slice(b"SONY DSC");
+        let entry = 120usize;
+        data[entry..entry + 2].copy_from_slice(&0x2001u16.to_le_bytes());
+        data[entry + 2..entry + 4].copy_from_slice(&7u16.to_le_bytes());
+        data[entry + 4..entry + 8].copy_from_slice(&150_000u32.to_le_bytes());
+        data[entry + 8..entry + 12].copy_from_slice(&150_000u32.to_le_bytes());
+        data.extend_from_slice(&[0u8; 10]);
+        adjust_sony_preview_offsets(&mut data, 200_000);
+        assert_eq!(
+            u32::from_le_bytes(data[entry + 8..entry + 12].try_into().unwrap()),
+            150_010
+        );
     }
 }
