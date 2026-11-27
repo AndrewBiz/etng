@@ -538,6 +538,9 @@ pub(crate) fn push_post_composites(tags: &mut Vec<Tag>) {
     }
 
     push_generic_composites(tags);
+    push_optical_composites(tags);
+    push_subsec_composites(tags);
+    push_wb_composites(tags);
 
     let latitude = find_f64(tags, "GPSLatitude");
     let longitude = find_f64(tags, "GPSLongitude");
@@ -643,6 +646,199 @@ pub(crate) fn push_post_composites(tags: &mut Vec<Tag>) {
             )
             .with_print(format!("{rounded:.1}")),
         );
+    }
+}
+
+fn push_optical_composites(tags: &mut Vec<Tag>) {
+    let focal = find_f64(tags, "FocalLength");
+    let scale = focal.and_then(|focal| calc_scale_35efl(tags, focal));
+    if let Some(scale) = scale {
+        tags.push(
+            Tag::new(
+                "Composite",
+                "Composite",
+                "ScaleFactor35efl",
+                Value::Float(scale),
+            )
+            .with_print(format!("{scale:.1}")),
+        );
+        let coc = 43.266615 / (scale * 1440.0);
+        tags.push(
+            Tag::new(
+                "Composite",
+                "Composite",
+                "CircleOfConfusion",
+                Value::Float(coc),
+            )
+            .with_print(format!("{coc:.3} mm")),
+        );
+        if let Some(focal) = focal
+            && focal > 0.0
+        {
+            let fov = 2.0 * (36.0 / (2.0 * focal * scale)).atan().to_degrees();
+            tags.push(
+                Tag::new("Composite", "Composite", "FOV", Value::Float(fov))
+                    .with_print(format!("{fov:.1} deg")),
+            );
+            let aperture = find_f64(tags, "FNumber").or_else(|| find_f64(tags, "Aperture"));
+            if let Some(aperture) = aperture
+                && aperture > 0.0
+            {
+                let hyperfocal = focal * focal / (aperture * coc * 1000.0);
+                tags.push(
+                    Tag::new(
+                        "Composite",
+                        "Composite",
+                        "HyperfocalDistance",
+                        Value::Float(hyperfocal),
+                    )
+                    .with_print(format!("{hyperfocal:.2} m")),
+                );
+            }
+        }
+    }
+    if let Some(altitude) = find_f64(tags, "GPSAltitude") {
+        let reference =
+            find_str(tags, "GPSAltitudeRef").unwrap_or_else(|| "Above Sea Level".to_string());
+        let truncated = (altitude * 10.0).trunc() / 10.0;
+        let altitude_print = if truncated == 0.0 {
+            format!("0 m {reference}")
+        } else {
+            format!("{truncated:.1} m {reference}")
+        };
+        tags.push(
+            Tag::new(
+                "Composite",
+                "Composite",
+                "GPSAltitude",
+                Value::Float(altitude),
+            )
+            .with_print(altitude_print),
+        );
+    }
+}
+
+fn calc_scale_35efl(tags: &[Tag], focal: f64) -> Option<f64> {
+    if focal <= 0.0 {
+        return None;
+    }
+    if let Some(equivalent) = find_f64(tags, "FocalLengthIn35mmFormat")
+        && equivalent > 0.0
+    {
+        return Some(equivalent / focal);
+    }
+    if let Some(diagonal) = find_f64(tags, "FocalPlaneDiagonal")
+        && diagonal > 0.0
+    {
+        return Some(43.266615 / diagonal);
+    }
+    if let Some(sensor) = find_str(tags, "SensorSize") {
+        let values: Vec<f64> = sensor
+            .split_whitespace()
+            .filter_map(|value| value.parse().ok())
+            .collect();
+        if values.len() >= 2 && values[0] > 0.0 && values[1] > 0.0 {
+            return Some(43.266615 / values[0].hypot(values[1]));
+        }
+    }
+    let xres = find_f64(tags, "FocalPlaneXResolution").filter(|value| *value > 0.0)?;
+    let yres = find_f64(tags, "FocalPlaneYResolution")
+        .filter(|value| *value > 0.0)
+        .unwrap_or(xres);
+    let unit = find_str(tags, "FocalPlaneResolutionUnit").unwrap_or_else(|| "inches".to_string());
+    let units = match unit.to_ascii_lowercase().as_str() {
+        "cm" => 10.0,
+        "mm" => 1.0,
+        "um" | "µm" => 0.001,
+        _ => 25.4,
+    };
+    let width = find_f64(tags, "ExifImageWidth")
+        .or_else(|| find_f64(tags, "CanonImageWidth"))
+        .or_else(|| find_f64(tags, "ImageWidth"))
+        .filter(|value| *value > 0.0)?;
+    let height = find_f64(tags, "ExifImageHeight")
+        .or_else(|| find_f64(tags, "CanonImageHeight"))
+        .or_else(|| find_f64(tags, "ImageHeight"))
+        .filter(|value| *value > 0.0)?;
+    let diagonal = (width * units / xres).hypot(height * units / yres);
+    if (1.0..100.0).contains(&diagonal) {
+        Some(43.266615 / diagonal)
+    } else {
+        None
+    }
+}
+
+fn push_subsec_composites(tags: &mut Vec<Tag>) {
+    let pairs = [
+        (
+            "SubSecDateTimeOriginal",
+            "DateTimeOriginal",
+            "SubSecTimeOriginal",
+            "OffsetTimeOriginal",
+        ),
+        (
+            "SubSecCreateDate",
+            "CreateDate",
+            "SubSecTimeDigitized",
+            "OffsetTimeDigitized",
+        ),
+        ("SubSecModifyDate", "ModifyDate", "SubSecTime", "OffsetTime"),
+    ];
+    for (name, date_name, subsec_name, offset_name) in pairs {
+        let Some(date) = find_str(tags, date_name) else {
+            continue;
+        };
+        let Some(subsec) = find_str(tags, subsec_name) else {
+            continue;
+        };
+        let subsec = subsec
+            .trim()
+            .chars()
+            .take_while(|ch| ch.is_ascii_digit())
+            .collect::<String>();
+        if subsec.is_empty() {
+            continue;
+        }
+        let mut value = format!("{date}.{subsec}");
+        if let Some(offset) = find_str(tags, offset_name)
+            && !date.contains(['+', '-', 'Z'])
+        {
+            value.push_str(&offset);
+        }
+        tags.push(Tag::new("Composite", "Composite", name, Value::Str(value)));
+    }
+}
+
+fn push_wb_composites(tags: &mut Vec<Tag>) {
+    if tags
+        .iter()
+        .any(|tag| tag.group1 == "Composite" && tag.name == "RedBalance")
+    {
+        return;
+    }
+    let Some(levels) =
+        find_str(tags, "WB_RGGBLevels").or_else(|| find_str(tags, "WB_RGGBLevelsAsShot"))
+    else {
+        return;
+    };
+    let Some(values) = parse_levels(&levels) else {
+        return;
+    };
+    if values[1] != 0 {
+        tags.push(Tag::new(
+            "Composite",
+            "Composite",
+            "RedBalance",
+            Value::Float((values[0] as f64 / values[1] as f64 * 1_000_000.0).round() / 1_000_000.0),
+        ));
+    }
+    if values[2] != 0 {
+        tags.push(Tag::new(
+            "Composite",
+            "Composite",
+            "BlueBalance",
+            Value::Float((values[3] as f64 / values[2] as f64 * 1_000_000.0).round() / 1_000_000.0),
+        ));
     }
 }
 
