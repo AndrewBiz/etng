@@ -120,6 +120,8 @@ etng -AllDates='2024:05:06 07:08:09' -FileModifyDate='2024:05:06 07:08:09' photo
   EXIF item/CMT box), MOV — `mvhd` CreateDate/ModifyDate.
 - **Запись MWG-текста:** только JPEG; XMP/IPTC при отсутствии создаются
   минимальные. `Keywords`/`Creator` принимают повторяемый флаг и пишут список.
+- **IPTCDigest:** после изменения IPTC ресурс `Photoshop:IPTCDigest`
+  пересчитывается (MD5 IIM), поэтому exiftool не предупреждает о рассинхроне.
 - **CR3 / Canon:** ColorData для JPEG/CR2 (версии 32/33/34/48/64/65), CTMD
   Track4, FilterInfo, FocusBracketing и LevelInfo уже читаются; полный
   CanonCustom и сложные Composite ещё не разобраны,

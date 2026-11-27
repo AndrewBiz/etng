@@ -20,9 +20,14 @@ pub fn update(data: &[u8], dates: &[(String, String)]) -> Result<Option<Vec<u8>>
         out = next;
         changed = true;
     }
+    let mut iptc_changed = false;
     if let Some(next) = update_iptc(&out, dates)? {
         out = next;
         changed = true;
+        iptc_changed = true;
+    }
+    if iptc_changed && let Some(next) = refresh_iptc_digest(&out)? {
+        out = next;
     }
     Ok(changed.then_some(out))
 }
@@ -315,15 +320,117 @@ fn build_iim(records: &[(u8, u8, Vec<u8>)]) -> Vec<u8> {
 }
 
 fn make_resource(iim: &[u8]) -> Vec<u8> {
+    make_resource_with_id(IPTC_RESOURCE, iim)
+}
+
+fn make_resource_with_id(resource: u16, data: &[u8]) -> Vec<u8> {
     let mut out = b"8BIM".to_vec();
-    out.extend_from_slice(&IPTC_RESOURCE.to_be_bytes());
+    out.extend_from_slice(&resource.to_be_bytes());
     out.extend_from_slice(&[0, 0]);
-    out.extend_from_slice(&(iim.len() as u32).to_be_bytes());
-    out.extend_from_slice(iim);
-    if iim.len() & 1 == 1 {
+    out.extend_from_slice(&(data.len() as u32).to_be_bytes());
+    out.extend_from_slice(data);
+    if data.len() & 1 == 1 {
         out.push(0);
     }
     out
+}
+
+#[cfg(test)]
+fn find_resource(block: &[u8], wanted: u16) -> Option<(usize, usize)> {
+    let mut pos = 0usize;
+    while pos + 12 <= block.len() {
+        if &block[pos..pos + 4] != b"8BIM" {
+            pos += 1;
+            continue;
+        }
+        let resource = u16::from_be_bytes([block[pos + 4], block[pos + 5]]);
+        let name_len = block[pos + 6] as usize;
+        let name_total = if name_len.is_multiple_of(2) {
+            name_len + 2
+        } else {
+            name_len + 1
+        };
+        let size_pos = pos + 6 + name_total;
+        if size_pos + 4 > block.len() {
+            return None;
+        }
+        let size = u32::from_be_bytes([
+            block[size_pos],
+            block[size_pos + 1],
+            block[size_pos + 2],
+            block[size_pos + 3],
+        ]) as usize;
+        let start = size_pos + 4;
+        let end = start.saturating_add(size);
+        if end > block.len() {
+            return None;
+        }
+        if resource == wanted {
+            return Some((start, size));
+        }
+        pos = end + (size & 1);
+    }
+    None
+}
+
+fn refresh_iptc_digest(data: &[u8]) -> Result<Option<Vec<u8>>, String> {
+    let Some((marker, length)) = find_segment(data, 0xED, PHOTOSHOP_SIG) else {
+        return Ok(None);
+    };
+    let payload = &data[marker + 2..marker + length];
+    let block = payload
+        .strip_prefix(PHOTOSHOP_SIG)
+        .ok_or_else(|| "invalid Photoshop segment".to_string())?;
+    let Some((iim_start, iim_len)) = find_iptc_resource(block) else {
+        return Ok(None);
+    };
+    let iim = &block[iim_start..iim_start + iim_len];
+    let digest = {
+        use md5::{Digest, Md5};
+        Md5::digest(iim)
+    };
+    let mut new_block = Vec::new();
+    let mut pos = 0usize;
+    let mut replaced = false;
+    while pos + 12 <= block.len() {
+        if &block[pos..pos + 4] != b"8BIM" {
+            break;
+        }
+        let resource = u16::from_be_bytes([block[pos + 4], block[pos + 5]]);
+        let name_len = block[pos + 6] as usize;
+        let name_total = if name_len.is_multiple_of(2) {
+            name_len + 2
+        } else {
+            name_len + 1
+        };
+        let size_pos = pos + 6 + name_total;
+        if size_pos + 4 > block.len() {
+            return Err("truncated Photoshop resource".to_string());
+        }
+        let size = u32::from_be_bytes([
+            block[size_pos],
+            block[size_pos + 1],
+            block[size_pos + 2],
+            block[size_pos + 3],
+        ]) as usize;
+        let end = size_pos + 4 + size;
+        if end + (size & 1) > block.len() {
+            return Err("truncated Photoshop resource".to_string());
+        }
+        if resource == 0x0425 {
+            new_block.extend_from_slice(&make_resource_with_id(0x0425, &digest));
+            replaced = true;
+        } else {
+            new_block.extend_from_slice(&block[pos..end + (size & 1)]);
+        }
+        pos = end + (size & 1);
+    }
+    if !replaced {
+        new_block.extend_from_slice(&make_resource_with_id(0x0425, &digest));
+    }
+    let mut new_payload = PHOTOSHOP_SIG.to_vec();
+    new_payload.extend_from_slice(&new_block);
+    replace_segment(data, marker, length, &new_payload).map(Some)
 }
 
 fn rebuild_block(block: &[u8], iim: &[u8]) -> Result<Vec<u8>, String> {
@@ -487,9 +594,14 @@ pub fn update_text(data: &[u8], entries: &[(String, String)]) -> Result<Option<V
         out = next;
         changed = true;
     }
+    let mut iptc_changed = false;
     if let Some(next) = update_iptc_text(&out, entries)? {
         out = next;
         changed = true;
+        iptc_changed = true;
+    }
+    if iptc_changed && let Some(next) = refresh_iptc_digest(&out)? {
+        out = next;
     }
     Ok(changed.then_some(out))
 }
@@ -767,5 +879,38 @@ mod tests {
         let mut records = vec![(2, 55, b"20020202".to_vec())];
         assert!(set_record(&mut records, 60, b"070809+0200".to_vec()));
         assert!(build_iim(&records).windows(3).any(|w| w == [0x1C, 2, 60]));
+    }
+}
+
+#[cfg(test)]
+mod digest_tests {
+    use super::*;
+    use md5::{Digest, Md5};
+
+    #[test]
+    fn refreshes_iptc_digest_after_date_update() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../tests/corpus/phtools/dates/1exif_datetimeoriginal.JPG"
+        );
+        let data = std::fs::read(path).unwrap();
+        let out = update(
+            &data,
+            &[(
+                "DateTimeOriginal".to_string(),
+                "2024:05:06 07:08:09".to_string(),
+            )],
+        )
+        .unwrap()
+        .unwrap();
+        let (marker, length) = find_segment(&out, 0xED, PHOTOSHOP_SIG).unwrap();
+        let block = out[marker + 2..marker + length]
+            .strip_prefix(PHOTOSHOP_SIG)
+            .unwrap();
+        let (iim_start, iim_len) = find_iptc_resource(block).unwrap();
+        let expected = Md5::digest(&block[iim_start..iim_start + iim_len]);
+        let (digest_start, digest_len) = find_resource(block, 0x0425).unwrap();
+        assert_eq!(digest_len, 16);
+        assert_eq!(&block[digest_start..digest_start + 16], expected.as_slice());
     }
 }
