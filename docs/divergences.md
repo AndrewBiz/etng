@@ -106,6 +106,7 @@ tag parity.
 - JPEG XMP/IPTC date and MWG text fields are updated or created.
 - `Keywords`/`Creator` accept repeated flags and write lists (XMP Bag/Seq,
   repeated IPTC records, EXIF Artist joined with `; `).
+- `Photoshop:IPTCDigest` is refreshed after IPTC changes (MD5 of the IIM block).
 - JPEG and TIFF-family containers only; HEIC/CR3/MOV writes are not implemented.
 - `FileModifyDate` uses local time and is set after the atomic file replacement.
 
