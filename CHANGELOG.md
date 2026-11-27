@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.18.1 — 2026-11-27
+
+- GPS-тест использует tracked TIFF fixture (CI checkout не содержит
+  `Canon_40D.jpg`).
+
 ## 0.18.0 — 2026-11-27
 
 ### GPS write
