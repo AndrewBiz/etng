@@ -1288,3 +1288,43 @@ fn writes_mov_header_dates() {
     assert_eq!(json[0]["QuickTime:CreateDate"], "2024:05:06 07:08:09");
     assert_eq!(json[0]["QuickTime:ModifyDate"], "2024:05:06 07:08:09");
 }
+
+#[test]
+fn writes_phtools_extra_tags() {
+    let dir = temp_dir("phtools-extra");
+    fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("extra.jpg");
+    fs::copy(corpus("phtools/dates/1exif_datetimeoriginal.JPG"), &path).unwrap();
+
+    let output = Command::new(bin())
+        .args([
+            "-CountryCode=RU",
+            "-WorldRegion=Europe",
+            "-CodedCharacterSet=UTF8",
+            "-ImageUniqueID=abc123",
+            path.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let read = Command::new(bin())
+        .args([
+            "-j",
+            "-G1",
+            "-XMP-iptcExt:LocationShownCountryCode",
+            "-XMP-iptcExt:LocationShownWorldRegion",
+            "-ExifIFD:ImageUniqueID",
+            path.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&read.stdout).unwrap();
+    assert_eq!(json[0]["XMP-iptcExt:LocationShownCountryCode"], "RU");
+    assert_eq!(json[0]["XMP-iptcExt:LocationShownWorldRegion"], "Europe");
+    assert_eq!(json[0]["ExifIFD:ImageUniqueID"], "abc123");
+}
