@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.24.0 — 2026-11-27
+
+### MOV write
+
+- `CreateDate`/`DateTimeOriginal`/`AllDates` обновляют существующий
+  `Keys:CreationDate` in-place, сохраняя timezone offset.
+- Отсутствующий Apple-ключ не создаётся; `mvhd` обновляется как раньше.
+
 ## 0.23.0 — 2026-11-27
 
 ### MOV / Apple extras
