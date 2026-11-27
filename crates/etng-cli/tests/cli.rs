@@ -807,6 +807,17 @@ fn writes_file_modify_date() {
             .as_str()
             .is_some_and(|value| value.starts_with("2024:05:06 07:08:09"))
     );
+
+    let text = Command::new(bin())
+        .args(["-s", "-FileModifyDate", path.to_str().unwrap()])
+        .output()
+        .unwrap();
+    let text = String::from_utf8_lossy(&text.stdout);
+    assert!(
+        text.lines()
+            .any(|line| line.starts_with("FileModifyDate") && line.contains("2024:05:06 07:08:09")),
+        "{text}"
+    );
 }
 
 #[test]
