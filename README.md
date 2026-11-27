@@ -176,6 +176,17 @@ python3 tests/compare_corpus.py          # тот же дифф, отчёт по
 python3 tests/bench.py                  # замеры против exiftool
 ```
 
+Интеграция с phtools (нужен Ruby + `bundle install`):
+
+```bash
+./tools/phtools-integration.sh
+./tools/phtools-integration.sh features/phgettags.feature
+python3 tools/exiftool-shim/test_shim.py
+```
+
+Shim переводит `exiftool`-вызовы phtools в etng; по умолчанию fallback на
+настоящий exiftool выключен, чтобы пробелы были видны.
+
 Структура:
 
 - `crates/etng-core` — модель тегов, парсеры (JPEG/TIFF/HEIC/CR3), JSON/CSV/raw.
