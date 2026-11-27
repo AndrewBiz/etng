@@ -109,15 +109,16 @@ etng -AllDates='2024:05:06 07:08:09' -FileModifyDate='2024:05:06 07:08:09' photo
 | CR3 | нативно: ISO-BMFF, CMT1–CMT4, QuickTime/Track, `THMB`/`PRVW`; в `auto` JSON/CSV дополняются exiftool до полного Canon-набора |
 | ARW | TIFF/Sony, SubIFD и `PreviewImage` (включая `-b`); SR2SubIFD и часть Sony-таблиц пока не читаются |
 | HEIC/HEIF | нативно: EXIF/XMP, `ftyp`/`hvcC`/`colr`/`ispe`/`irot`/`pixi`/`auxC`/`mdat` |
-| PNG | нативно: IHDR, eXIf, XMP в iTXt/tEXt, sRGB, tIME |
+| PNG | нативно: IHDR, eXIf, XMP в iTXt/tEXt, sRGB, tIME; запись дат в eXIf |
 | MOV | нативно: ftyp, mvhd (даты, длительность), mdat; треки/кодеки — нет |
 | MTS/M2TS | нативно: demux TS, H.264 SEI MDPM — дата, GPS |
 
 ## Ограничения
 
-- **Запись дат:** JPEG/TIFF, HEIC/CR3, MOV. В HEIC/CR3/MOV перезаписываются
+- **Запись дат:** JPEG/TIFF, HEIC/CR3, MOV, PNG. В HEIC/CR3/MOV перезаписываются
   существующие даты; в HEIC/CR3 отсутствующие даты вставляются (append-only
-  EXIF item/CMT box), MOV — `mvhd` CreateDate/ModifyDate.
+  EXIF item/CMT box), MOV — `mvhd` CreateDate/ModifyDate. В PNG обновляется
+  или создаётся `eXIf` chunk.
 - **Запись MWG-текста:** только JPEG; XMP/IPTC при отсутствии создаются
   минимальные. `Keywords`/`Creator` принимают повторяемый флаг и пишут список.
 - **IPTCDigest:** после изменения IPTC ресурс `Photoshop:IPTCDigest`
