@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.21.2 — 2026-11-27
+
+### Исправлено
+
+- IPTC `DateCreated`/`DigitalCreationDate` выводятся как `YYYY:MM:DD`, а
+  `TimeCreated`/`DigitalCreationTime` — как `HH:MM:SS±HH:MM`, как ExifTool.
+  Это устраняет расхождение, из-за которого MiniExiftool не считал IPTC
+  `DateCreated` датой.
+
 ## 0.21.1 — 2026-11-27
 
 ### Исправлено
