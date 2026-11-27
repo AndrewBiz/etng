@@ -15,6 +15,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -27,6 +28,11 @@ DEFAULT_CORPUS = Path.home() / "Pictures" / "test_corpus"
 DEFAULT_ETNG = Path.home() / "work" / "etng" / "target" / "release" / "etng"
 DEFAULT_PHTOOLS = Path.home() / "work" / "phtools"
 SHIM = Path.home() / "work" / "etng" / "tools" / "exiftool-shim" / "exiftool"
+PHTOOLS_EXTENSIONS = {
+    ".jpg", ".jpeg", ".tif", ".tiff", ".png", ".heic", ".orf", ".arw", ".dng",
+    ".cr3", ".avi", ".mp4", ".mpg", ".mts", ".dv", ".mov", ".mkv", ".m2t",
+    ".m2ts", ".3gp", ".wav",
+}
 
 IGNORED_KEYS = {
     "SourceFile",
@@ -39,6 +45,12 @@ IGNORED_KEYS = {
     "File:FileAccessDate",
     "File:FileInodeChangeDate",
 }
+
+
+def camera_name(path: Path) -> str:
+    """Strip the phtools standard prefix to exercise phrename."""
+    name = re.sub(r"^\d{8}-\d{6}_[A-Z]{3} ", "", path.name).strip()
+    return name or path.name
 
 
 def run(cmd, *, cwd=None, env=None, input_text=None):
@@ -195,9 +207,13 @@ def main() -> int:
     root = Path(tempfile.mkdtemp(prefix="etng-audit-"))
     copy_dir = root / "copy"
     rename_dir = root / "rename"
+    move_dir = root / "move"
+    moved_dir = root / "moved"
     shim_dir = root / "bin"
     copy_dir.mkdir()
     rename_dir.mkdir()
+    move_dir.mkdir()
+    moved_dir.mkdir()
     shim_dir.mkdir()
     shutil.copy2(SHIM, shim_dir / "exiftool")
     (shim_dir / "exiftool").chmod(0o755)
@@ -205,9 +221,14 @@ def main() -> int:
 
     print(f"copying {len(files)} files...", flush=True)
     stage = time.perf_counter()
+    used = set()
     for path in files:
         shutil.copy2(path, copy_dir / path.name)
-        shutil.copy2(path, rename_dir / path.name)
+        target = camera_name(path)
+        if target in used:
+            target = f"{path.stem}-{len(used)}{path.suffix}"
+        used.add(target)
+        shutil.copy2(path, rename_dir / target)
     timings["copy"] = round(time.perf_counter() - stage, 3)
     print(f"copied in {timings['copy']}s", flush=True)
 
@@ -247,6 +268,14 @@ def main() -> int:
     print(f"phrename in {timings['phrename']}s", flush=True)
 
     renamed = sorted(rename_dir.iterdir()) if rename_dir.exists() else []
+    rename_names = [path.name for path in renamed if path.is_file()]
+    rename_unsupported = sorted(
+        path.name for path in renamed if path.is_file() and path.suffix.lower() not in PHTOOLS_EXTENSIONS
+    )
+    rename_count_ok = (
+        len(rename_names) - len(rename_unsupported)
+        == len([path for path in files if path.suffix.lower() in PHTOOLS_EXTENSIONS])
+    )
     hashes_before_second = {path.name: sha256(path) for path in renamed if path.is_file()}
     stage = time.perf_counter()
     rename2 = pipe(
@@ -282,6 +311,35 @@ def main() -> int:
     timings["phfixdto_second"] = round(time.perf_counter() - stage, 3)
     fix_hashes_after = {path.name: sha256(path) for path in renamed_files if path.is_file()}
     fix_idempotent = fix_hashes == fix_hashes_after
+
+    for path in renamed_files:
+        if path.is_file():
+            shutil.copy2(path, move_dir / path.name)
+    print("running phrename on camera names + phmove...", flush=True)
+    stage = time.perf_counter()
+    move1 = pipe(
+        ruby + [str(args.phtools / "exe" / "phls"), "."],
+        ruby + [str(args.phtools / "exe" / "phmove"), "-a", str(moved_dir)],
+        env=env,
+        cwd=move_dir,
+    )
+    timings["phmove"] = round(time.perf_counter() - stage, 3)
+    print(f"phmove in {timings['phmove']}s", flush=True)
+    moved_files = sorted(path for path in moved_dir.rglob("*") if path.is_file())
+    expected_move = set()
+    for path in renamed_files:
+        if path.suffix.lower() not in PHTOOLS_EXTENSIONS:
+            continue
+        ext = path.suffix.lower()
+        if ext in {".mov", ".mp4", ".mts", ".m2ts", ".avi", ".mpg", ".mkv", ".3gp", ".wav"}:
+            expected_move.add(moved_dir / "VIDEO" / path.name)
+        elif ext in {".cr2", ".cr3", ".arw", ".dng", ".nef", ".orf"}:
+            expected_move.add(moved_dir / "RAW" / path.name)
+        else:
+            expected_move.add(moved_dir / path.name)
+    actual_move = set(moved_files)
+    move_missing = sorted(str(path.relative_to(moved_dir)) for path in expected_move - actual_move)
+    move_extra = sorted(str(path.relative_to(moved_dir)) for path in actual_move - expected_move)
 
     stage = time.perf_counter()
     after_etng = {path: read_json(args.etng, path) for path in renamed_files}
@@ -330,7 +388,21 @@ def main() -> int:
             "output": rename1[2],
             "stderr": rename1[3],
             "idempotent": rename_idempotent,
+            "names": rename_names,
+            "count_ok": rename_count_ok,
+            "unsupported": rename_unsupported,
             "second_returncodes": rename2[:2],
+        },
+        "phmove": {
+            "returncodes": move1[:2],
+            "stderr": move1[3],
+            "missing": move_missing,
+            "extra": move_extra,
+            "files": len(moved_files),
+            "supported_candidates": len(
+                [path for path in renamed_files if path.suffix.lower() in PHTOOLS_EXTENSIONS]
+            ),
+            "unsupported": rename_unsupported,
         },
         "phfixdto": {
             "returncodes": fix1[:2],
@@ -366,18 +438,25 @@ def main() -> int:
         )
     )
     print(
-        "phtools: phls={} phrename={} phfixdto={} validate={}".format(
+        "phtools: phls={} phrename={} (names={}, count_ok={}) phfixdto={} phmove={} validate={}".format(
             phls_ok,
             rename1[0] == 0 and rename1[1] == 0,
+            len(rename_names),
+            rename_count_ok,
             fix1[0] == 0 and fix1[1] == 0,
+            move1[0] == 0 and move1[1] == 0,
             clean,
         )
     )
+    if rename_unsupported:
+        print(f"phtools unsupported types: {rename_unsupported}")
+    if move_missing or move_extra:
+        print(f"phmove mismatches: missing={move_missing[:5]} extra={move_extra[:5]}")
     if args.keep:
         print(f"workdir: {root}")
     else:
         shutil.rmtree(root, ignore_errors=True)
-    return 0 if clean and phls_ok and rename1[0] == 0 and rename1[1] == 0 and fix1[0] == 0 and fix1[1] == 0 else 1
+    return 0 if clean and phls_ok and rename1[0] == 0 and rename1[1] == 0 and fix1[0] == 0 and fix1[1] == 0 and move1[0] == 0 and move1[1] == 0 and not move_missing and not move_extra else 1
 
 
 if __name__ == "__main__":
