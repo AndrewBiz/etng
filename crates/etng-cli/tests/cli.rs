@@ -1328,3 +1328,60 @@ fn writes_phtools_extra_tags() {
     assert_eq!(json[0]["XMP-iptcExt:LocationShownWorldRegion"], "Europe");
     assert_eq!(json[0]["ExifIFD:ImageUniqueID"], "abc123");
 }
+
+#[test]
+fn writes_gps_tags() {
+    let dir = temp_dir("gps-write");
+    fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("gps.jpg");
+    fs::copy(corpus("real/Canon_40D.jpg"), &path).unwrap();
+
+    let output = Command::new(bin())
+        .args([
+            "-GPSLatitude=55.75",
+            "-GPSLatitudeRef=N",
+            "-GPSLongitude=37.6173",
+            "-GPSLongitudeRef=E",
+            "-GPSAltitude=150.5",
+            "-GPSAltitudeRef=0",
+            path.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let read = Command::new(bin())
+        .args([
+            "-j",
+            "-G1",
+            "-Composite:GPSLatitude",
+            "-Composite:GPSLongitude",
+            "-GPS:GPSAltitude",
+            path.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&read.stdout).unwrap();
+    assert!(
+        json[0]["Composite:GPSLatitude"]
+            .as_str()
+            .unwrap()
+            .starts_with("55 deg 45")
+    );
+    assert!(
+        json[0]["Composite:GPSLongitude"]
+            .as_str()
+            .unwrap()
+            .starts_with("37 deg 37")
+    );
+    assert!(
+        json[0]["GPS:GPSAltitude"]
+            .as_str()
+            .unwrap()
+            .starts_with("150.5 m")
+    );
+}

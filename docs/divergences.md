@@ -108,7 +108,7 @@ tag parity.
   repeated IPTC records, EXIF Artist joined with `; `).
 - `Photoshop:IPTCDigest` is refreshed after IPTC changes (MD5 of the IIM block).
 - `CountryCode`/`WorldRegion` are XMP-only; `CodedCharacterSet` is IPTC 1:90;
-  `ImageUniqueID` is ExifIFD 0xA420.
+  `ImageUniqueID` is ExifIFD 0xA420; GPS tags are written to the EXIF GPS IFD.
 - JPEG and TIFF-family containers only; HEIC/CR3/MOV writes are not implemented.
 - `FileModifyDate` uses local time and is set after the atomic file replacement.
 
