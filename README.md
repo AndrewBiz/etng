@@ -140,9 +140,11 @@ etng -AllDates='2024:05:06 07:08:09' -FileModifyDate='2024:05:06 07:08:09' photo
 Пишет даты и MWG-текстовые теги. `DateTimeOriginal`/`CreateDate` вставляются в
 ExifIFD, `ModifyDate` — в IFD0; `AllDates` разворачивается в три тега. Для JPEG
 обновляются/создаются XMP и IPTC-пакеты. MWG-теги: `City`, `Country`, `State`,
-`Location`, `Keywords`, `Creator`, `Copyright` — пишутся в XMP/IPTC, а
-`Creator`/`Copyright` также в EXIF `Artist`/`Copyright`. Замена атомарная (temp + rename), права файла
-сохраняются.
+`Location`, `Keywords`, `Creator`, `Copyright`, `CountryCode`, `WorldRegion`,
+`CodedCharacterSet`, `ImageUniqueID` и GPS (`GPSLatitude/Ref`,
+`GPSLongitude/Ref`, `GPSAltitude/Ref`). `Creator`/`Copyright` также пишутся в
+EXIF `Artist`/`Copyright`, `ImageUniqueID` — в ExifIFD, GPS — в GPS IFD.
+Замена атомарная (temp + rename), права файла сохраняются.
 
 Поддерживаемые цели: `DateTimeOriginal`, `CreateDate`, `ModifyDate`,
 `AllDates`, `FileModifyDate`. Формат даты: `YYYY:MM:DD HH:MM:SS` или

@@ -20,6 +20,15 @@ pub const WRITABLE: [&str; 4] = [
     "FILEMODIFYDATE",
 ];
 
+pub const WRITABLE_GPS: [&str; 6] = [
+    "GPSLATITUDE",
+    "GPSLATITUDEREF",
+    "GPSLONGITUDE",
+    "GPSLONGITUDEREF",
+    "GPSALTITUDE",
+    "GPSALTITUDEREF",
+];
+
 pub const WRITABLE_TEXT: [&str; 12] = [
     "CITY",
     "COUNTRY",
@@ -39,11 +48,16 @@ pub fn is_writable(name: &str) -> bool {
     let name = name.trim_start_matches('-').to_ascii_uppercase();
     WRITABLE.contains(&name.as_str())
         || WRITABLE_TEXT.contains(&name.as_str())
+        || WRITABLE_GPS.contains(&name.as_str())
         || name == "ALLDATES"
 }
 
 fn is_text(name: &str) -> bool {
     WRITABLE_TEXT.contains(&name.to_ascii_uppercase().as_str())
+}
+
+fn is_gps(name: &str) -> bool {
+    WRITABLE_GPS.contains(&name.to_ascii_uppercase().as_str())
 }
 
 pub fn normalize_date(value: &str) -> Result<String, String> {
@@ -62,11 +76,16 @@ pub fn normalize_date(value: &str) -> Result<String, String> {
 pub fn write(path: &Path, assignments: &[(String, String)]) -> Result<usize, String> {
     let mut exif_updates = Vec::new();
     let mut text_updates = Vec::new();
+    let mut gps_updates = Vec::new();
     let mut file_modify = None;
     for (name, value) in assignments {
         let name = name.trim_start_matches('-').to_ascii_uppercase();
         if is_text(&name) {
             text_updates.push((title_case(&name), value.clone()));
+            continue;
+        }
+        if is_gps(&name) {
+            gps_updates.push((title_case(&name), value.clone()));
             continue;
         }
         let value = normalize_date(value)?;
@@ -129,15 +148,32 @@ pub fn write(path: &Path, assignments: &[(String, String)]) -> Result<usize, Str
             ));
         }
     }
-    if !text_updates.is_empty() {
+    if !text_updates.is_empty() || !gps_updates.is_empty() {
         let data = fs::read(path).map_err(|err| format!("{}: {err}", path.display()))?;
-        let patched = apply_exif_text(&data, &text_updates)?;
+        let kind = sniff::detect(&data);
+        if !matches!(
+            kind,
+            FileType::Jpeg
+                | FileType::Tiff
+                | FileType::Dng
+                | FileType::Cr2
+                | FileType::Arw
+                | FileType::Nef
+        ) {
+            return Err(format!(
+                "{}: GPS/text tags are not supported for {}",
+                path.display(),
+                kind.name()
+            ));
+        }
+        let mut patched = apply_exif_text(&data, &text_updates)?;
+        patched = apply_exif_gps(&patched, &gps_updates)?;
         if let Some(updated) = date_sidecars::update_text(&patched, &text_updates)? {
             atomic_replace(path, &updated)?;
         } else if patched != data {
             atomic_replace(path, &patched)?;
         }
-        written += text_updates.len();
+        written += text_updates.len() + gps_updates.len();
     }
     if let Some(value) = file_modify {
         set_file_modify(path, &value)?;
@@ -533,6 +569,257 @@ fn set_exif_string(data: &[u8], tag: u16, value: &str) -> Result<Vec<u8>, String
     }
     write_u32(&mut tiff_data, pointer_at, new_offset);
     rebuild_tiff(data, bounds, tiff_data)
+}
+
+fn apply_exif_gps(data: &[u8], updates: &[(String, String)]) -> Result<Vec<u8>, String> {
+    if updates.is_empty() {
+        return Ok(data.to_vec());
+    }
+    let bounds = exif_bounds(data).ok_or_else(|| "no EXIF/TIFF payload found".to_string())?;
+    let tiff = Tiff::at(data, bounds.base).ok_or_else(|| "invalid TIFF header".to_string())?;
+    let ifd0 = tiff
+        .first_ifd_offset()
+        .and_then(|offset| tiff.read_ifd(offset))
+        .ok_or_else(|| "cannot read IFD0".to_string())?;
+    let gps_pointer = ifd0.entries.iter().find(|entry| entry.tag == 0x8825);
+    let old_gps = gps_pointer.and_then(|entry| tiff.read_ifd(entry.value_or_offset));
+    let mut entries: Vec<(u16, u16, u32, Vec<u8>)> = Vec::new();
+    if let Some(gps) = &old_gps {
+        for entry in &gps.entries {
+            if let Some(bytes) = tiff.entry_bytes(entry) {
+                entries.push((entry.tag, entry.typ, entry.count, bytes.to_vec()));
+            }
+        }
+    }
+    for (name, value) in updates {
+        let (tag, typ, count, bytes) = match name.as_str() {
+            "GPSLatitude" => (0x0002, 5, 3, gps_rationals(value, tiff.le)?),
+            "GPSLongitude" => (0x0004, 5, 3, gps_rationals(value, tiff.le)?),
+            "GPSAltitude" => (0x0006, 5, 1, gps_altitude(value, tiff.le)?),
+            "GPSLatitudeRef" => (0x0001, 2, 2, gps_ref(value, true)?),
+            "GPSLongitudeRef" => (0x0003, 2, 2, gps_ref(value, false)?),
+            "GPSAltitudeRef" => (0x0005, 1, 1, gps_altitude_ref(value)?),
+            other => return Err(format!("unsupported GPS tag: {other}")),
+        };
+        if let Some(entry) = entries.iter_mut().find(|entry| entry.0 == tag) {
+            *entry = (tag, typ, count, bytes);
+        } else {
+            entries.push((tag, typ, count, bytes));
+        }
+    }
+    entries.sort_by_key(|entry| entry.0);
+    let gps_offset = {
+        let len = data[bounds.base..bounds.end].len();
+        len + (len & 1)
+    };
+    let gps_bytes = build_ifd(&entries, gps_offset, 0, tiff.le);
+    let mut tiff_data = data[bounds.base..bounds.end].to_vec();
+    tiff_data.resize(gps_offset, 0);
+    tiff_data.extend_from_slice(&gps_bytes);
+    if let Some(pointer) = gps_pointer {
+        let at = pointer.entry_offset.saturating_sub(bounds.base) + 8;
+        write_u32_at(&mut tiff_data, at, gps_offset as u32, tiff.le)?;
+    } else {
+        let ifd0_offset = tiff_data.len() + (tiff_data.len() & 1);
+        let mut raw_entries = Vec::new();
+        for entry in &ifd0.entries {
+            let start = entry.entry_offset;
+            raw_entries.push(
+                data.get(start..start + 12)
+                    .ok_or_else(|| "IFD0 entry outside file".to_string())?
+                    .to_vec(),
+            );
+        }
+        let mut pointer = vec![0u8; 12];
+        let tag_raw = if tiff.le {
+            0x8825u16.to_le_bytes()
+        } else {
+            0x8825u16.to_be_bytes()
+        };
+        pointer[0..2].copy_from_slice(&tag_raw);
+        let type_raw = if tiff.le {
+            4u16.to_le_bytes()
+        } else {
+            4u16.to_be_bytes()
+        };
+        pointer[2..4].copy_from_slice(&type_raw);
+        let count_raw = if tiff.le {
+            1u32.to_le_bytes()
+        } else {
+            1u32.to_be_bytes()
+        };
+        pointer[4..8].copy_from_slice(&count_raw);
+        let offset_raw = if tiff.le {
+            (gps_offset as u32).to_le_bytes()
+        } else {
+            (gps_offset as u32).to_be_bytes()
+        };
+        pointer[8..12].copy_from_slice(&offset_raw);
+        raw_entries.push(pointer);
+        raw_entries.sort_by_key(|entry| u16::from_be_bytes([entry[0], entry[1]]));
+        let mut ifd0_bytes = Vec::with_capacity(2 + raw_entries.len() * 12 + 4);
+        ifd0_bytes.extend_from_slice(&(raw_entries.len() as u16).to_be_bytes());
+        if tiff.le {
+            ifd0_bytes[0..2].copy_from_slice(&(raw_entries.len() as u16).to_le_bytes());
+        }
+        for entry in &raw_entries {
+            ifd0_bytes.extend_from_slice(entry);
+        }
+        let next_raw = if tiff.le {
+            ifd0.next.to_le_bytes()
+        } else {
+            ifd0.next.to_be_bytes()
+        };
+        ifd0_bytes.extend_from_slice(&next_raw);
+        tiff_data.resize(ifd0_offset, 0);
+        tiff_data.extend_from_slice(&ifd0_bytes);
+        let header = if tiff.le {
+            (ifd0_offset as u32).to_le_bytes()
+        } else {
+            (ifd0_offset as u32).to_be_bytes()
+        };
+        tiff_data[4..8].copy_from_slice(&header);
+    }
+    rebuild_tiff(data, bounds, tiff_data)
+}
+
+fn write_u32_at(data: &mut [u8], at: usize, value: u32, le: bool) -> Result<(), String> {
+    if at + 4 > data.len() {
+        return Err("EXIF offset outside TIFF".to_string());
+    }
+    let raw = if le {
+        value.to_le_bytes()
+    } else {
+        value.to_be_bytes()
+    };
+    data[at..at + 4].copy_from_slice(&raw);
+    Ok(())
+}
+
+fn build_ifd(entries: &[(u16, u16, u32, Vec<u8>)], offset: usize, next: u32, le: bool) -> Vec<u8> {
+    let count = entries.len();
+    let values_start = offset + 2 + count * 12 + 4;
+    let mut out = vec![0u8; 2 + count * 12 + 4];
+    put_u16(&mut out, 0, count as u16, le);
+    let mut values = Vec::new();
+    for (index, (tag, typ, entry_count, bytes)) in entries.iter().enumerate() {
+        let at = 2 + index * 12;
+        put_u16(&mut out, at, *tag, le);
+        put_u16(&mut out, at + 2, *typ, le);
+        put_u32(&mut out, at + 4, *entry_count, le);
+        if bytes.len() <= 4 {
+            out[at + 8..at + 8 + bytes.len()].copy_from_slice(bytes);
+        } else {
+            let value_offset = values_start + values.len();
+            put_u32(&mut out, at + 8, value_offset as u32, le);
+            values.extend_from_slice(bytes);
+            if values.len() & 1 == 1 {
+                values.push(0);
+            }
+        }
+    }
+    put_u32(&mut out, 2 + count * 12, next, le);
+    out.extend_from_slice(&values);
+    out
+}
+
+fn put_u16(data: &mut [u8], at: usize, value: u16, le: bool) {
+    let raw = if le {
+        value.to_le_bytes()
+    } else {
+        value.to_be_bytes()
+    };
+    data[at..at + 2].copy_from_slice(&raw);
+}
+
+fn put_u32(data: &mut [u8], at: usize, value: u32, le: bool) {
+    let raw = if le {
+        value.to_le_bytes()
+    } else {
+        value.to_be_bytes()
+    };
+    data[at..at + 4].copy_from_slice(&raw);
+}
+
+fn gps_rationals(value: &str, le: bool) -> Result<Vec<u8>, String> {
+    let cleaned = value.replace(['"', '\'', '°'], " ").replace("deg", " ");
+    let mut parts: Vec<f64> = Vec::new();
+    for part in cleaned.split(|ch: char| ch.is_whitespace() || ch == ',') {
+        if part.is_empty() {
+            continue;
+        }
+        parts.push(
+            part.parse::<f64>()
+                .map_err(|_| format!("invalid GPS coordinate {value}"))?,
+        );
+    }
+    let (degrees, minutes, seconds) = match parts.as_slice() {
+        [decimal] => {
+            let abs = decimal.abs();
+            let degrees = abs.floor();
+            let minutes = ((abs - degrees) * 60.0).floor();
+            let seconds = (abs - degrees - minutes / 60.0) * 3600.0;
+            (degrees as u32, minutes as u32, seconds)
+        }
+        [degrees, minutes, seconds, ..] => (*degrees as u32, *minutes as u32, *seconds),
+        _ => return Err(format!("invalid GPS coordinate {value}")),
+    };
+    let mut out = Vec::new();
+    for (value, scale) in [
+        (degrees as f64, 1u32),
+        (minutes as f64, 1),
+        (seconds, 10_000),
+    ] {
+        let numerator = (value * scale as f64).round() as u32;
+        if le {
+            out.extend_from_slice(&numerator.to_le_bytes());
+            out.extend_from_slice(&scale.to_le_bytes());
+        } else {
+            out.extend_from_slice(&numerator.to_be_bytes());
+            out.extend_from_slice(&scale.to_be_bytes());
+        }
+    }
+    Ok(out)
+}
+
+fn gps_altitude(value: &str, le: bool) -> Result<Vec<u8>, String> {
+    let meters = value
+        .trim()
+        .trim_end_matches('m')
+        .trim()
+        .parse::<f64>()
+        .map_err(|_| format!("invalid GPS altitude {value}"))?
+        .abs();
+    let numerator = (meters * 1000.0).round() as u32;
+    let mut out = Vec::new();
+    if le {
+        out.extend_from_slice(&numerator.to_le_bytes());
+        out.extend_from_slice(&1000u32.to_le_bytes());
+    } else {
+        out.extend_from_slice(&numerator.to_be_bytes());
+        out.extend_from_slice(&1000u32.to_be_bytes());
+    }
+    Ok(out)
+}
+
+fn gps_ref(value: &str, latitude: bool) -> Result<Vec<u8>, String> {
+    let upper = value.trim().to_ascii_uppercase();
+    let reference = match (latitude, upper.as_str()) {
+        (true, "N" | "NORTH") => 'N',
+        (true, "S" | "SOUTH") => 'S',
+        (false, "E" | "EAST") => 'E',
+        (false, "W" | "WEST") => 'W',
+        _ => return Err(format!("invalid GPS reference {value}")),
+    };
+    Ok(vec![reference as u8, 0])
+}
+
+fn gps_altitude_ref(value: &str) -> Result<Vec<u8>, String> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "0" | "above sea level" | "above" | "sea level" => Ok(vec![0]),
+        "1" | "below sea level" | "below" => Ok(vec![1]),
+        _ => Err(format!("invalid GPS altitude reference {value}")),
+    }
 }
 
 fn apply_exif_text(data: &[u8], updates: &[(String, String)]) -> Result<Vec<u8>, String> {
@@ -944,6 +1231,12 @@ fn title_case(name: &str) -> String {
         "WORLDREGION" => "WorldRegion".to_string(),
         "CODEDCHARSET" | "CODEDCHARACTERSET" => "CodedCharacterSet".to_string(),
         "IMAGEUNIQUEID" => "ImageUniqueID".to_string(),
+        "GPSLATITUDE" => "GPSLatitude".to_string(),
+        "GPSLATITUDEREF" => "GPSLatitudeRef".to_string(),
+        "GPSLONGITUDE" => "GPSLongitude".to_string(),
+        "GPSLONGITUDEREF" => "GPSLongitudeRef".to_string(),
+        "GPSALTITUDE" => "GPSAltitude".to_string(),
+        "GPSALTITUDEREF" => "GPSAltitudeRef".to_string(),
         other => other.to_string(),
     }
 }
