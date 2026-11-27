@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.25.0 — 2026-11-27
+
+### Аудит корпуса
+
+- `tools/corpus-audit.py`: копии, etng/exiftool JSON-сравнение,
+  `phls`/`phrename`/`phfixdto`, validate и тайминги.
+- Shim передаёт `--fallback=never`, устраняя рекурсию exiftool → etng → shim.
+
 ## 0.24.0 — 2026-11-27
 
 ### MOV write
