@@ -294,6 +294,18 @@ fn write_text(out: &mut impl Write, report: &FileReport, opts: &ReadOptions) -> 
         return Ok(());
     }
     writeln!(out, "======== {}", report.source.display())?;
+    if !opts.selection.is_empty() {
+        for field in system_fields(&report.system, opts.numeric, opts.binary) {
+            if opts.is_excluded(field.group0, field.group1, field.name) {
+                continue;
+            }
+            if opts.selection.iter().any(|selection| {
+                selection_matches(selection, field.group0, field.group1, field.name)
+            }) {
+                writeln!(out, "{:<32}: {}", field.name, field.value)?;
+            }
+        }
+    }
     for tag in &report.tags {
         if !opts.wants(tag.group0, tag.group1, tag.name) {
             continue;
