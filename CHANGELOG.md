@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.23.0 — 2026-11-27
+
+### MOV / Apple extras
+
+- `Keys:GPSCoordinates` из `com.apple.quicktime.location.ISO6709`.
+- `Keys:ContentIdentifier`.
+- `UserData:ContentCreateDate` / `ItemList:ContentCreateDate` из `©day`.
+
 ## 0.22.0 — 2026-11-27
 
 ### MOV / Apple Keys
