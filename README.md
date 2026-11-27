@@ -9,7 +9,7 @@ ExifTool нового поколения: быстрый CLI на Rust с выв
 запись дат. Без Perl, с нативным
 разбором контейнеров и опциональным fallback на системный exiftool.
 
-**Статус:** alpha (0.26.0). Ядро чтения стабильно, покрытие форматов расширяется.
+**Статус:** alpha (0.27.0). Ядро чтения стабильно, покрытие форматов расширяется.
 
 GitHub: https://github.com/AndrewBiz/etng · GitVerse: https://gitverse.ru/kazimir_bizik/etng
 
@@ -47,9 +47,9 @@ GitHub: https://github.com/AndrewBiz/etng · GitVerse: https://gitverse.ru/kazim
 Linux x86_64, статический бинарник (musl), без зависимостей:
 
 ```bash
-curl -LO https://github.com/AndrewBiz/etng/releases/download/v0.26.0/etng-0.26.0-x86_64-unknown-linux-musl.tar.gz
-tar xzf etng-0.26.0-x86_64-unknown-linux-musl.tar.gz
-install -m755 etng-0.26.0-x86_64-unknown-linux-musl/etng ~/.local/bin/etng
+curl -LO https://github.com/AndrewBiz/etng/releases/download/v0.27.0/etng-0.27.0-x86_64-unknown-linux-musl.tar.gz
+tar xzf etng-0.27.0-x86_64-unknown-linux-musl.tar.gz
+install -m755 etng-0.27.0-x86_64-unknown-linux-musl/etng ~/.local/bin/etng
 ```
 
 Контрольная сумма — в `.sha256` рядом с архивом. Все релизы:
