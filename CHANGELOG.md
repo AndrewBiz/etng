@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.28.0 — 2026-11-28
+
+### Добавлено
+
+- `Composite:ScaleFactor35efl`, `CircleOfConfusion`, `FOV`,
+  `HyperfocalDistance`; `GPSAltitude`; `SubSec*Date`; Red/BlueBalance.
+- Missing на тестовом корпусе: 1596 → 1490.
+
 ## 0.27.0 — 2026-11-27
 
 ### Добавлено
