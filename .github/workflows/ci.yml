@@ -100,4 +100,5 @@ jobs:
       - name: Run phtools through etng shim
         env:
           PHTOOLS_DIR: ${{ github.workspace }}/phtools
+          ETNG_SHIM_KEEP: "1"
         run: ./tools/phtools-integration.sh

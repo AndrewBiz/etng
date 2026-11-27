@@ -21,7 +21,14 @@ fi
 cargo build -q --manifest-path "$ROOT/Cargo.toml" -p etng-cli
 
 WORK="$(mktemp -d)"
-trap 'rm -rf "$WORK"' EXIT
+cleanup() {
+    if [ -n "${ETNG_SHIM_KEEP:-}" ]; then
+        echo "--- exiftool shim log ---"
+        cat "$ETNG_SHIM_LOG" 2>/dev/null || true
+    fi
+    rm -rf "$WORK"
+}
+trap cleanup EXIT
 cp "$ROOT/tools/exiftool-shim/exiftool" "$WORK/exiftool"
 chmod +x "$WORK/exiftool"
 
