@@ -23,6 +23,7 @@ import sys
 from pathlib import Path
 
 ETNG = os.environ.get("ETNG_BIN") or shutil.which("etng") or "etng"
+ETNG_BASE = [ETNG, "--fallback=never"]
 REAL_EXIFTOOL = os.environ.get("REAL_EXIFTOOL") or shutil.which("exiftool") or "/usr/bin/exiftool"
 LOG = os.environ.get("ETNG_SHIM_LOG", "-")
 READ_FALLBACK = os.environ.get("ETNG_SHIM_FALLBACK", "0") == "1"
@@ -106,7 +107,7 @@ def sanitize_read_args(args: list[str]) -> list[str]:
 
 def passthrough_read(args: list[str]) -> int:
     args = sanitize_read_args(args)
-    result = run([ETNG, *args])
+    result = run([*ETNG_BASE, *args])
     if result.returncode != 0 and READ_FALLBACK and Path(REAL_EXIFTOOL).exists():
         log("etng read failed; falling back to exiftool")
         real = run([REAL_EXIFTOOL, *args])
@@ -174,7 +175,7 @@ def translate_script(path: Path) -> int:
         if copy_file_date:
             date = next((value for name, value in tags if name == "DateTimeOriginal"), None)
             if date is None:
-                read = run([ETNG, "-j", "-G1", "-DateTimeOriginal", current_file])
+                read = run([*ETNG_BASE, "-j", "-G1", "-DateTimeOriginal", current_file])
                 if read.returncode != 0:
                     sys.stderr.buffer.write(read.stderr)
                     return False
@@ -191,7 +192,7 @@ def translate_script(path: Path) -> int:
             current_file = None
             return True
         args.append(current_file)
-        result = run([ETNG, *args])
+        result = run([*ETNG_BASE, *args])
         sys.stdout.buffer.write(result.stdout)
         sys.stderr.buffer.write(result.stderr)
         ok = result.returncode == 0
