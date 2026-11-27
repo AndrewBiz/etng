@@ -749,6 +749,98 @@ fn png_is_native_with_exif_and_png_chunks() {
     assert_eq!(object["IFD0:ImageWidth"], 64);
 }
 
+fn strip_png_chunk(data: &[u8], kind: &[u8; 4]) -> Vec<u8> {
+    let mut out = data[..8].to_vec();
+    let mut pos = 8;
+    while pos + 12 <= data.len() {
+        let length =
+            u32::from_be_bytes([data[pos], data[pos + 1], data[pos + 2], data[pos + 3]]) as usize;
+        let end = pos + 12 + length;
+        if &data[pos + 4..pos + 8] != kind {
+            out.extend_from_slice(&data[pos..end]);
+        }
+        pos = end;
+    }
+    out
+}
+
+#[test]
+fn writes_png_dates_into_existing_exif() {
+    let dir = temp_dir("write-png-exif");
+    let path = dir.join("copy.png");
+    fs::copy(corpus("synthetic/base.png"), &path).unwrap();
+    let output = Command::new(bin())
+        .args([
+            "-DateTimeOriginal=2024:05:06 07:08:09",
+            "-CreateDate=2024:05:06 07:08:09",
+            "-ModifyDate=2024:05:06 07:08:09",
+            path.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let read = Command::new(bin())
+        .args([
+            "-j",
+            "-G1",
+            "-DateTimeOriginal",
+            "-CreateDate",
+            "-ModifyDate",
+            "-PNG:ImageWidth",
+            path.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&read.stdout).unwrap();
+    assert_eq!(json[0]["ExifIFD:DateTimeOriginal"], "2024:05:06 07:08:09");
+    assert_eq!(json[0]["ExifIFD:CreateDate"], "2024:05:06 07:08:09");
+    assert_eq!(json[0]["IFD0:ModifyDate"], "2024:05:06 07:08:09");
+    assert_eq!(json[0]["PNG:ImageWidth"], 64);
+}
+
+#[test]
+fn writes_png_dates_without_exif() {
+    let dir = temp_dir("write-png-noexif");
+    let path = dir.join("copy.png");
+    let source = fs::read(corpus("synthetic/base.png")).unwrap();
+    fs::write(&path, strip_png_chunk(&source, b"eXIf")).unwrap();
+    let output = Command::new(bin())
+        .args([
+            "-DateTimeOriginal=2024:05:06 07:08:09",
+            "-CreateDate=2024:05:06 07:08:09",
+            "-ModifyDate=2024:05:06 07:08:09",
+            path.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let read = Command::new(bin())
+        .args([
+            "-j",
+            "-G1",
+            "-DateTimeOriginal",
+            "-CreateDate",
+            "-ModifyDate",
+            "-PNG:ImageWidth",
+            path.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&read.stdout).unwrap();
+    assert_eq!(json[0]["ExifIFD:DateTimeOriginal"], "2024:05:06 07:08:09");
+    assert_eq!(json[0]["ExifIFD:CreateDate"], "2024:05:06 07:08:09");
+    assert_eq!(json[0]["IFD0:ModifyDate"], "2024:05:06 07:08:09");
+    assert_eq!(json[0]["PNG:ImageWidth"], 64);
+}
+
 #[test]
 fn writes_datetime_original_in_place() {
     let dir = temp_dir("write-dto");

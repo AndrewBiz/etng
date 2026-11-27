@@ -1,7 +1,7 @@
 //! Date writing MVP: in-place EXIF date values + FileModifyDate.
 //!
 //! Only existing date fields are rewritten; missing fields are reported instead
-//! of being inserted. JPEG and TIFF-family containers are supported.
+//! of being inserted. JPEG, TIFF-family containers and PNG eXIf are supported.
 
 use std::fs::{self, File};
 use std::path::{Path, PathBuf};
@@ -11,7 +11,7 @@ use chrono::{Local, NaiveDateTime, TimeZone};
 use crate::date_sidecars;
 use crate::sniff::{self, FileType};
 use crate::tiff::Tiff;
-use crate::{cr3, heic};
+use crate::{cr3, heic, png};
 
 pub const WRITABLE: [&str; 4] = [
     "DATETIMEORIGINAL",
@@ -119,6 +119,10 @@ pub fn write(path: &Path, assignments: &[(String, String)]) -> Result<usize, Str
             let patched = patch_bmff_dates(&data, &exif_updates)?;
             atomic_replace(path, &patched)?;
             written += exif_updates.len();
+        } else if kind == FileType::Png {
+            let patched = patch_png_dates(&data, &exif_updates)?;
+            atomic_replace(path, &patched)?;
+            written += exif_updates.len();
         } else if matches!(
             kind,
             FileType::Jpeg
@@ -184,6 +188,26 @@ pub fn write(path: &Path, assignments: &[(String, String)]) -> Result<usize, Str
         written += 1;
     }
     Ok(written)
+}
+
+fn patch_png_dates(data: &[u8], updates: &[(String, String)]) -> Result<Vec<u8>, String> {
+    let Some(exif) = png::extract_exif(data) else {
+        let tiff = png::build_exif(None, updates)?;
+        return png::replace_exif(data, &tiff);
+    };
+    let mut tiff = exif.to_vec();
+    match apply_exif(&mut tiff, updates) {
+        Ok(()) => {}
+        Err(err) if err.contains("not found") => {
+            if png::has_exif_ifd(exif) {
+                tiff = insert_dates(&tiff, updates)?;
+            } else {
+                tiff = png::build_exif(Some(exif), updates)?;
+            }
+        }
+        Err(err) => return Err(err),
+    }
+    png::replace_exif(data, &tiff)
 }
 
 fn patch_bmff_dates(data: &[u8], updates: &[(String, String)]) -> Result<Vec<u8>, String> {
