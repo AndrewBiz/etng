@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.22.0 — 2026-11-27
+
+### MOV / Apple Keys
+
+- Чтение `moov/meta` (`keys` + `ilst`).
+- `Keys:CreationDate` из `com.apple.quicktime.creationdate`
+  (`2021-02-22T17:28:32+0300` → `2021:02:22 17:28:32+03:00`).
+- `Keys:Make`, `Keys:Model`, `Keys:Software`.
+- `QuickTime:CreateDate` из `mvhd` сохраняется.
+
 ## 0.21.2 — 2026-11-27
 
 ### Исправлено
