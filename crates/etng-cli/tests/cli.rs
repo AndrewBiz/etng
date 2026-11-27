@@ -1300,6 +1300,85 @@ fn writes_mov_header_dates() {
     assert_eq!(json[0]["QuickTime:ModifyDate"], "2024:05:06 07:08:09");
 }
 
+fn minimal_mov_with_apple_key(created: &str) -> Vec<u8> {
+    fn atom(kind: &[u8; 4], payload: &[u8]) -> Vec<u8> {
+        let mut out = (payload.len() as u32 + 8).to_be_bytes().to_vec();
+        out.extend_from_slice(kind);
+        out.extend_from_slice(payload);
+        out
+    }
+    let mut ftyp = b"qt  ".to_vec();
+    ftyp.extend_from_slice(&0u32.to_be_bytes());
+    ftyp.extend_from_slice(b"qt  ");
+    let mut mvhd = vec![0u8; 100];
+    mvhd[0] = 0;
+    mvhd[12..16].copy_from_slice(&1000u32.to_be_bytes());
+    mvhd[16..20].copy_from_slice(&1000u32.to_be_bytes());
+
+    let key = b"com.apple.quicktime.creationdate";
+    let mut key_entry = Vec::new();
+    key_entry.extend_from_slice(&(8 + key.len() as u32).to_be_bytes());
+    key_entry.extend_from_slice(b"mdta");
+    key_entry.extend_from_slice(key);
+    let mut keys = vec![0u8; 4];
+    keys.extend_from_slice(&1u32.to_be_bytes());
+    keys.extend_from_slice(&key_entry);
+
+    let mut data = vec![1u32, 0u32]
+        .into_iter()
+        .flat_map(u32::to_be_bytes)
+        .collect::<Vec<_>>();
+    data.extend_from_slice(created.as_bytes());
+    let item_kind = 1u32.to_be_bytes();
+    let item = atom(&item_kind, &atom(b"data", &data));
+    let mut meta_payload = atom(b"hdlr", &[0; 24]);
+    meta_payload.extend_from_slice(&atom(b"keys", &keys));
+    meta_payload.extend_from_slice(&atom(b"ilst", &item));
+    let meta = atom(b"meta", &meta_payload);
+
+    let mut moov_payload = atom(b"mvhd", &mvhd);
+    moov_payload.extend_from_slice(&meta);
+    let moov = atom(b"moov", &moov_payload);
+    let mut out = atom(b"ftyp", &ftyp);
+    out.extend_from_slice(&moov);
+    out
+}
+
+#[test]
+fn writes_mov_apple_creation_date() {
+    use std::io::Write;
+    let dir = temp_dir("mov-apple-write");
+    fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("clip.mov");
+    let mut file = fs::File::create(&path).unwrap();
+    file.write_all(&minimal_mov_with_apple_key("2001-01-01T01:01:01+0300"))
+        .unwrap();
+
+    let output = Command::new(bin())
+        .args(["-CreateDate=2024:05:06 07:08:09", path.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let read = Command::new(bin())
+        .args([
+            "-j",
+            "-G1",
+            "-CreateDate",
+            "-Keys:CreationDate",
+            path.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&read.stdout).unwrap();
+    assert_eq!(json[0]["QuickTime:CreateDate"], "2024:05:06 07:08:09");
+    assert_eq!(json[0]["Keys:CreationDate"], "2024:05:06 07:08:09+03:00");
+}
+
 #[test]
 fn writes_phtools_extra_tags() {
     let dir = temp_dir("phtools-extra");
