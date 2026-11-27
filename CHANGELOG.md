@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.19.0 — 2026-11-27
+
+### MWG Collections
+
+- `-Collections=Name|URI`, можно повторять.
+- XMP `mwg-coll:Collections` — `rdf:Bag` из структур
+  `CollectionName`/`CollectionURI`.
+- XMP создаётся при отсутствии; существующий список заменяется.
+- 123 теста.
+
 ## 0.18.1 — 2026-11-27
 
 - GPS-тест использует tracked TIFF fixture (CI checkout не содержит
