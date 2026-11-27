@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.20.0 — 2026-11-27
+
+### Интеграция с phtools
+
+- `tools/exiftool-shim/exiftool`: read → etng, `-@` script → etng.
+- Поддержка MWG/XMP/IPTC/GPS/Collections и
+  `-FileModifyDate<DateTimeOriginal`.
+- `tools/phtools-integration.sh`: PATH shim + cucumber.
+- Strict fallback off по умолчанию; smoke-тесты в CI.
+- 123 теста + 2 shim-теста.
+
 ## 0.19.0 — 2026-11-27
 
 ### MWG Collections
