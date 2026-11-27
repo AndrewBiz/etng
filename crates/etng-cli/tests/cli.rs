@@ -765,6 +765,34 @@ fn strip_png_chunk(data: &[u8], kind: &[u8; 4]) -> Vec<u8> {
 }
 
 #[test]
+fn composite_optical_and_subsec_tags_match_exiftool() {
+    let output = Command::new(bin())
+        .args([
+            "-j",
+            "-G1",
+            "-Composite:ScaleFactor35efl",
+            "-Composite:CircleOfConfusion",
+            "-Composite:FOV",
+            "-Composite:HyperfocalDistance",
+            "-Composite:GPSAltitude",
+            "-Composite:SubSecDateTimeOriginal",
+            corpus("real/exif.jpg").to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json[0]["Composite:ScaleFactor35efl"], 2.7);
+    assert_eq!(json[0]["Composite:CircleOfConfusion"], "0.011 mm");
+    assert_eq!(json[0]["Composite:FOV"], "76.1 deg");
+    assert_eq!(json[0]["Composite:HyperfocalDistance"], "3.79 m");
+    assert_eq!(json[0]["Composite:GPSAltitude"], "0 m Above Sea Level");
+    assert_eq!(
+        json[0]["Composite:SubSecDateTimeOriginal"],
+        "2023:07:09 20:36:33.616+08:00"
+    );
+}
+
+#[test]
 fn writes_png_dates_into_existing_exif() {
     let dir = temp_dir("write-png-exif");
     let path = dir.join("copy.png");
