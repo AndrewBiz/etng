@@ -76,7 +76,7 @@ class ShimTest(unittest.TestCase):
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         calls = [json.loads(line) for line in self.log.read_text().splitlines()]
-        self.assertEqual(calls, [["-j", "photo.jpg"]])
+        self.assertEqual(calls, [["--fallback=never", "-j", "photo.jpg"]])
 
     def test_copy_file_modify_date(self):
         script = self.root / "script.txt"
@@ -92,7 +92,7 @@ class ShimTest(unittest.TestCase):
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         calls = [json.loads(line) for line in self.log.read_text().splitlines()]
-        self.assertTrue(any(call[:1] == ["-j"] for call in calls))
+        self.assertTrue(any(call[:2] == ["--fallback=never", "-j"] for call in calls))
         self.assertTrue(
             any("-FileModifyDate=2024:05:06 07:08:09" in call for call in calls)
         )
