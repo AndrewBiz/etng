@@ -29,7 +29,7 @@ pub const WRITABLE_GPS: [&str; 6] = [
     "GPSALTITUDEREF",
 ];
 
-pub const WRITABLE_TEXT: [&str; 12] = [
+pub const WRITABLE_TEXT: [&str; 13] = [
     "CITY",
     "COUNTRY",
     "STATE",
@@ -42,6 +42,7 @@ pub const WRITABLE_TEXT: [&str; 12] = [
     "CODEDCHARSET",
     "CODEDCHARACTERSET",
     "IMAGEUNIQUEID",
+    "COLLECTIONS",
 ];
 
 pub fn is_writable(name: &str) -> bool {
@@ -1231,6 +1232,7 @@ fn title_case(name: &str) -> String {
         "WORLDREGION" => "WorldRegion".to_string(),
         "CODEDCHARSET" | "CODEDCHARACTERSET" => "CodedCharacterSet".to_string(),
         "IMAGEUNIQUEID" => "ImageUniqueID".to_string(),
+        "COLLECTIONS" => "Collections".to_string(),
         "GPSLATITUDE" => "GPSLatitude".to_string(),
         "GPSLATITUDEREF" => "GPSLatitudeRef".to_string(),
         "GPSLONGITUDE" => "GPSLongitude".to_string(),

@@ -1385,3 +1385,39 @@ fn writes_gps_tags() {
             .starts_with("150.5 m")
     );
 }
+
+#[test]
+fn writes_collections() {
+    let dir = temp_dir("collections-write");
+    fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("collections.jpg");
+    fs::copy(corpus("phtools/dates/7filemodifydate.JPG"), &path).unwrap();
+
+    let output = Command::new(bin())
+        .args([
+            "-Collections=Name 1|uri1",
+            "-Collections=Name 2|uri2",
+            path.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let read = Command::new(bin())
+        .args([
+            "-j",
+            "-G1",
+            "-XMP-mwg-coll:CollectionName",
+            "-XMP-mwg-coll:CollectionURI",
+            path.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&read.stdout).unwrap();
+    assert_eq!(json[0]["XMP-mwg-coll:CollectionName"], "Name 1");
+    assert_eq!(json[0]["XMP-mwg-coll:CollectionURI"], "uri1");
+}
