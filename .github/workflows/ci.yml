@@ -72,3 +72,32 @@ jobs:
           "$RUNNER_TEMP/exiftool-13.55/exiftool" -ver
       - run: cargo build --workspace
       - run: cargo run -q -p xtask -- compare
+
+  phtools:
+    name: phtools integration
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.100.0
+      - uses: Swatinem/rust-cache@v2
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.4"
+      - name: Checkout phtools
+        uses: actions/checkout@v5
+        with:
+          repository: AndrewBiz/phtools
+          ref: 8e3f18c75e08b5b9e93afa0dfc4a58a95ff9b27c
+          path: phtools
+      - name: Install phtools dependencies
+        run: |
+          cd phtools
+          printf "\ngem 'erb'\ngem 'mutex_m'\n" >> Gemfile
+          bundle config set --local path vendor/bundle
+          bundle install --jobs 4 --retry 3
+      - name: Run phtools through etng shim
+        env:
+          PHTOOLS_DIR: ${{ github.workspace }}/phtools
+        run: ./tools/phtools-integration.sh
