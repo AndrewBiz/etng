@@ -141,6 +141,7 @@ pub fn parse(data: &[u8], out: &mut Vec<Tag>) {
     }
 
     parse_apple_keys(&top, out);
+    parse_content_create_date(&top, out);
 
     for atom in &top {
         if &atom.kind == b"mdat" {
@@ -202,6 +203,8 @@ fn parse_apple_keys(top: &[Atom<'_>], out: &mut Vec<Tag>) {
             "com.apple.quicktime.make" => ("Make", value),
             "com.apple.quicktime.model" => ("Model", value),
             "com.apple.quicktime.software" => ("Software", value),
+            "com.apple.quicktime.location.ISO6709" => ("GPSCoordinates", apple_gps(&value)),
+            "com.apple.quicktime.content.identifier" => ("ContentIdentifier", value),
             _ => continue,
         };
         if !value.is_empty() {
@@ -247,6 +250,121 @@ fn parse_key_names(payload: &[u8]) -> Vec<String> {
         pos = end;
     }
     names
+}
+
+fn parse_content_create_date(top: &[Atom<'_>], out: &mut Vec<Tag>) {
+    let Some(moov) = top.iter().find(|atom| &atom.kind == b"moov") else {
+        return;
+    };
+    let Some(udta) = child(moov.payload, b"udta") else {
+        return;
+    };
+    for atom in atoms(udta) {
+        if &atom.kind == b"\xa9day"
+            && let Some(value) = text_value(atom.payload)
+        {
+            out.push(Tag::new(
+                "QuickTime",
+                "UserData",
+                "ContentCreateDate",
+                Value::Str(apple_date(&value)),
+            ));
+        }
+        if &atom.kind == b"meta" {
+            let meta = if atoms(atom.payload).is_empty() && atom.payload.len() > 4 {
+                &atom.payload[4..]
+            } else {
+                atom.payload
+            };
+            let Some(ilst) = child(meta, b"ilst") else {
+                continue;
+            };
+            for item in atoms(ilst) {
+                if &item.kind != b"\xa9day" {
+                    continue;
+                }
+                let Some(data) = child(item.payload, b"data") else {
+                    continue;
+                };
+                if data.len() < 8 || be32(&data[..4]) != Some(1) {
+                    continue;
+                }
+                let value = String::from_utf8_lossy(&data[8..])
+                    .trim_end_matches('\0')
+                    .to_string();
+                if !value.is_empty() {
+                    out.push(Tag::new(
+                        "QuickTime",
+                        "ItemList",
+                        "ContentCreateDate",
+                        Value::Str(apple_date(&value)),
+                    ));
+                }
+            }
+        }
+    }
+}
+
+fn text_value(data: &[u8]) -> Option<String> {
+    let value = String::from_utf8_lossy(data)
+        .trim_matches(|ch: char| ch == '\0' || ch.is_whitespace())
+        .to_string();
+    if value.is_empty() {
+        return None;
+    }
+    Some(value)
+}
+
+fn apple_gps(raw: &str) -> String {
+    let raw = raw.trim().trim_end_matches('/');
+    let mut parts = Vec::new();
+    let mut start = 0usize;
+    for (index, byte) in raw.bytes().enumerate() {
+        if index > 0 && (byte == b'+' || byte == b'-') {
+            parts.push(&raw[start..index]);
+            start = index;
+        }
+    }
+    if start < raw.len() {
+        parts.push(&raw[start..]);
+    }
+    let Some(latitude) = parts.first().and_then(|part| part.parse::<f64>().ok()) else {
+        return raw.to_string();
+    };
+    let Some(longitude) = parts.get(1).and_then(|part| part.parse::<f64>().ok()) else {
+        return raw.to_string();
+    };
+    let mut out = format!(
+        "{}, {}",
+        apple_coordinate(latitude, 'N', 'S'),
+        apple_coordinate(longitude, 'E', 'W')
+    );
+    if let Some(altitude) = parts.get(2).and_then(|part| part.parse::<f64>().ok()) {
+        let direction = if altitude < 0.0 {
+            "Below Sea Level"
+        } else {
+            "Above Sea Level"
+        };
+        out.push_str(&format!(", {:.3} m {direction}", altitude.abs()));
+    }
+    out
+}
+
+fn apple_coordinate(value: f64, positive: char, negative: char) -> String {
+    let hemisphere = if value < 0.0 { negative } else { positive };
+    let mut degrees = value.abs().floor() as i64;
+    let minutes_total = (value.abs() - degrees as f64) * 60.0;
+    let mut minutes = minutes_total.floor() as i64;
+    let mut seconds = (minutes_total - minutes as f64) * 60.0;
+    if seconds >= 59.995 {
+        seconds = 0.0;
+        minutes += 1;
+    }
+    if minutes >= 60 {
+        minutes = 0;
+        degrees += 1;
+    }
+    format!("{degrees} deg {minutes}' {seconds:.2}\" {hemisphere}")
 }
 
 fn apple_date(raw: &str) -> String {
@@ -358,6 +476,8 @@ mod tests {
             "com.apple.quicktime.model",
             "com.apple.quicktime.software",
             "com.apple.quicktime.creationdate",
+            "com.apple.quicktime.location.ISO6709",
+            "com.apple.quicktime.content.identifier",
         ];
         let mut keys_payload = vec![0u8; 4];
         keys_payload.extend_from_slice(&(keys.len() as u32).to_be_bytes());
@@ -370,6 +490,8 @@ mod tests {
             "iPhone 6s Plus",
             "14.4",
             "2021-02-22T17:28:32+0300",
+            "+55.0132+037.4721+184.497/",
+            "9B14D7B9-6A47-443E-A565-E2E7ECE6A604",
         ]
         .iter()
         .enumerate()
@@ -386,7 +508,8 @@ mod tests {
             ]
             .concat(),
         );
-        let data = atom(b"moov", &meta);
+        let udta = atom(b"udta", &atom(b"\xa9day", b"2017-01-06T12:04:06+1000"));
+        let data = atom(b"moov", &[meta, udta].concat());
 
         let mut tags = Vec::new();
         parse(&data, &mut tags);
@@ -402,5 +525,20 @@ mod tests {
         assert_eq!(get("Make"), Some(("Keys", "Apple".to_string())));
         assert_eq!(get("Model"), Some(("Keys", "iPhone 6s Plus".to_string())));
         assert_eq!(get("Software"), Some(("Keys", "14.4".to_string())));
+        assert_eq!(
+            get("GPSCoordinates"),
+            Some((
+                "Keys",
+                "55 deg 0' 47.52\" N, 37 deg 28' 19.56\" E, 184.497 m Above Sea Level".to_string()
+            ))
+        );
+        assert_eq!(
+            get("ContentIdentifier"),
+            Some(("Keys", "9B14D7B9-6A47-443E-A565-E2E7ECE6A604".to_string()))
+        );
+        assert_eq!(
+            get("ContentCreateDate"),
+            Some(("UserData", "2017:01:06 12:04:06+10:00".to_string()))
+        );
     }
 }
