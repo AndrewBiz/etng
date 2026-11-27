@@ -67,6 +67,17 @@ class ShimTest(unittest.TestCase):
         self.assertIn("-Collections=Event|uri", args)
         self.assertEqual(args[-1], "photo.jpg")
 
+    def test_read_drops_exiftool_formatting_options(self):
+        result = subprocess.run(
+            [sys.executable, str(SHIM), "-j", "-c", "%d %d %.4f", "photo.jpg"],
+            env=self.env,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        calls = [json.loads(line) for line in self.log.read_text().splitlines()]
+        self.assertEqual(calls, [["-j", "photo.jpg"]])
+
     def test_copy_file_modify_date(self):
         script = self.root / "script.txt"
         script.write_text(

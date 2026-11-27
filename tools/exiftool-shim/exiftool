@@ -81,7 +81,31 @@ def run(command: list[str], *, stdin: bytes | None = None) -> subprocess.Complet
     return subprocess.run(command, input=stdin, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
 
+READ_IGNORED = {
+    "-a", "-u", "-ee", "-fast", "-fast2", "-fast5", "-m", "-q", "-q-",
+    "-validate", "-validate!", "-progress", "-progress:", "-D", "-v", "-v0", "-v1", "-v2", "-v3",
+}
+READ_IGNORED_WITH_VALUE = {"-c", "-charset", "-lang", "-api", "-d", "-o", "-w", "-W", "-p", "-if", "-fileorder"}
+
+
+def sanitize_read_args(args: list[str]) -> list[str]:
+    out: list[str] = []
+    index = 0
+    while index < len(args):
+        arg = args[index]
+        if arg in READ_IGNORED:
+            index += 1
+            continue
+        if arg in READ_IGNORED_WITH_VALUE:
+            index += 2
+            continue
+        out.append(arg)
+        index += 1
+    return out
+
+
 def passthrough_read(args: list[str]) -> int:
+    args = sanitize_read_args(args)
     result = run([ETNG, *args])
     if result.returncode != 0 and READ_FALLBACK and Path(REAL_EXIFTOOL).exists():
         log("etng read failed; falling back to exiftool")
