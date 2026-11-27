@@ -977,12 +977,12 @@ fn writes_xmp_and_iptc_datetimeoriginal() {
         .unwrap();
     let json: serde_json::Value = serde_json::from_slice(&read.stdout).unwrap();
     assert_eq!(json[0]["XMP-photoshop:DateCreated"], "2024:05:06 07:08:09");
-    assert_eq!(json[0]["IPTC:DateCreated"], 20240506);
+    assert_eq!(json[0]["IPTC:DateCreated"], "2024:05:06");
     assert!(
         json[0]["IPTC:TimeCreated"]
             .as_str()
             .unwrap()
-            .starts_with("070809")
+            .starts_with("07:08:09")
     );
 }
 
@@ -1015,7 +1015,7 @@ fn writes_xmp_and_iptc_createdate() {
         .unwrap();
     let json: serde_json::Value = serde_json::from_slice(&read.stdout).unwrap();
     assert_eq!(json[0]["XMP-xmp:CreateDate"], "2024:05:06 07:08:09");
-    assert_eq!(json[0]["IPTC:DigitalCreationDate"], 20240506);
+    assert_eq!(json[0]["IPTC:DigitalCreationDate"], "2024:05:06");
 }
 
 #[test]
@@ -1053,9 +1053,9 @@ fn creates_xmp_and_iptc_dates_when_absent() {
     assert_eq!(json[0]["XMP-photoshop:DateCreated"], "2024:05:06 07:08:09");
     assert_eq!(json[0]["XMP-xmp:CreateDate"], "2024:05:06 07:08:09");
     assert_eq!(json[0]["XMP-xmp:ModifyDate"], "2024:05:06 07:08:09");
-    assert_eq!(json[0]["IPTC:DateCreated"], 20240506);
-    assert_eq!(json[0]["IPTC:TimeCreated"], "070809+0000");
-    assert_eq!(json[0]["IPTC:DigitalCreationDate"], 20240506);
+    assert_eq!(json[0]["IPTC:DateCreated"], "2024:05:06");
+    assert_eq!(json[0]["IPTC:TimeCreated"], "07:08:09+00:00");
+    assert_eq!(json[0]["IPTC:DigitalCreationDate"], "2024:05:06");
 }
 
 #[test]

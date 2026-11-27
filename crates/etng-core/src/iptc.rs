@@ -44,13 +44,21 @@ pub fn parse_iim(data: &[u8], out: &mut Vec<Tag>) {
             let id = dataset.to_string();
             if let Some(def) = tables().find_table_id(table, &id) {
                 let raw = &data[start..end];
-                let value = match def.typ {
-                    "int16u" => Value::Int(u16::from_be_bytes([raw[0], raw[1]]) as i64),
-                    "int16s" => Value::Int(i16::from_be_bytes([raw[0], raw[1]]) as i64),
-                    "int32u" if raw.len() >= 4 => {
-                        Value::Int(u32::from_be_bytes([raw[0], raw[1], raw[2], raw[3]]) as i64)
+                let value = match def.name {
+                    "DateCreated" | "DigitalCreationDate" => {
+                        Value::Str(iptc_date(&String::from_utf8_lossy(raw)))
                     }
-                    _ => iim_value(raw),
+                    "TimeCreated" | "DigitalCreationTime" => {
+                        Value::Str(iptc_time(&String::from_utf8_lossy(raw)))
+                    }
+                    _ => match def.typ {
+                        "int16u" => Value::Int(u16::from_be_bytes([raw[0], raw[1]]) as i64),
+                        "int16s" => Value::Int(i16::from_be_bytes([raw[0], raw[1]]) as i64),
+                        "int32u" if raw.len() >= 4 => {
+                            Value::Int(u32::from_be_bytes([raw[0], raw[1], raw[2], raw[3]]) as i64)
+                        }
+                        _ => iim_value(raw),
+                    },
                 };
                 if let Some(existing) = out
                     .iter_mut()
@@ -71,6 +79,36 @@ pub fn parse_iim(data: &[u8], out: &mut Vec<Tag>) {
             }
         }
         pos = end;
+    }
+}
+
+fn iptc_date(raw: &str) -> String {
+    let raw = raw.trim();
+    if raw.len() == 8 && raw.bytes().all(|byte| byte.is_ascii_digit()) {
+        format!("{}:{}:{}", &raw[0..4], &raw[4..6], &raw[6..8])
+    } else {
+        raw.to_string()
+    }
+}
+
+fn iptc_time(raw: &str) -> String {
+    let raw = raw.trim();
+    if raw.len() >= 6
+        && raw.bytes().take(6).all(|byte| byte.is_ascii_digit())
+        && raw.as_bytes()[2] != b':'
+    {
+        let mut out = format!("{}:{}:{}", &raw[0..2], &raw[2..4], &raw[4..6]);
+        let rest = &raw[6..];
+        if rest.len() == 5 && (rest.starts_with('+') || rest.starts_with('-')) {
+            out.push_str(&rest[0..3]);
+            out.push(':');
+            out.push_str(&rest[3..5]);
+        } else if rest == "Z" {
+            out.push('Z');
+        }
+        out
+    } else {
+        raw.to_string()
     }
 }
 
@@ -215,6 +253,26 @@ mod tests {
         let mut tags = Vec::new();
         parse_iim(&data, &mut tags);
         assert_eq!(tags.len(), 1);
+    }
+
+    #[test]
+    fn formats_iptc_dates_and_times_like_exiftool() {
+        let mut data = iim(2, 55, b"20020202");
+        data.extend(iim(2, 60, b"020202+0200"));
+        data.extend(iim(2, 62, b"20060606"));
+        data.extend(iim(2, 63, b"060606+0600"));
+        let mut tags = Vec::new();
+        parse_iim(&data, &mut tags);
+        let value = |name: &str| {
+            tags.iter()
+                .find(|tag| tag.name == name)
+                .map(|tag| tag.value.display())
+                .unwrap()
+        };
+        assert_eq!(value("DateCreated"), "2002:02:02");
+        assert_eq!(value("TimeCreated"), "02:02:02+02:00");
+        assert_eq!(value("DigitalCreationDate"), "2006:06:06");
+        assert_eq!(value("DigitalCreationTime"), "06:06:06+06:00");
     }
 
     #[test]
