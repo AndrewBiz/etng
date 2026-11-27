@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.17.0 — 2026-11-27
+
+### Оставшиеся phtools-теги
+
+- `CountryCode`/`WorldRegion` → XMP `Iptc4xmpExt`.
+- `CodedCharacterSet` → IPTC 1:90 (`UTF8` → `\x1b%G`).
+- `ImageUniqueID` → ExifIFD `0xA420`, с append-only вставкой.
+- 120 тестов.
+
 ## 0.16.1 — 2026-11-27
 
 ### IPTCDigest
