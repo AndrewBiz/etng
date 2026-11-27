@@ -187,6 +187,9 @@ python3 tools/exiftool-shim/test_shim.py
 Shim переводит `exiftool`-вызовы phtools в etng; по умолчанию fallback на
 настоящий exiftool выключен, чтобы пробелы были видны.
 
+В CI job `phtools` клонирует phtools на закреплённый commit и прогоняет
+`phgettags` + `phfixdto` через shim.
+
 Структура:
 
 - `crates/etng-core` — модель тегов, парсеры (JPEG/TIFF/HEIC/CR3), JSON/CSV/raw.
