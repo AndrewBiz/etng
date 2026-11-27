@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.21.0 — 2026-11-27
+
+### CI
+
+- Новая job `phtools`: Ruby 3.4, phtools pinned commit `8e3f18c`,
+  `phgettags` + `phfixdto` через etng shim.
+- Интеграционный baseline: 12/12 сценариев.
+
 ## 0.20.2 — 2026-11-27
 
 ### Исправлено
