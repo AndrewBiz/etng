@@ -100,16 +100,4 @@ jobs:
       - name: Run phtools through etng shim
         env:
           PHTOOLS_DIR: ${{ github.workspace }}/phtools
-          ETNG_SHIM_KEEP: "1"
-        run: |
-          cargo build -q -p etng-cli
-          target/debug/etng -ver
-          target/debug/etng -j phtools/features/media/sony_jpg/DSC03403.JPG | wc -c
-          mkdir -p .ci-shim
-          cp tools/exiftool-shim/exiftool .ci-shim/exiftool
-          chmod +x .ci-shim/exiftool
-          cd phtools
-          PATH="$PWD/../.ci-shim:$PATH" ETNG_BIN="$PWD/../target/debug/etng" \
-            bundle exec ruby -Ilib -e 'require "mini_exiftool"; t=MiniExiftool.new(ARGV[0], numerical: false, coord_format: "%d %d %.4f", replace_invalid_chars: true, composite: true, timestamps: DateTime); h=t.to_hash; puts "keys=#{h.size}"; puts h.keys.first(5).inspect; puts h.keys.last(5).inspect; puts "bytes=#{t.instance_variable_get(:@output).bytesize}"' features/media/sony_jpg/DSC03403.JPG
-          cd ..
-          ./tools/phtools-integration.sh
+        run: ./tools/phtools-integration.sh
