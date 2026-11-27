@@ -5,3 +5,6 @@
 tests/corpus/real/Canon_40D*
 tests/corpus/real/Nikon_D70*
 tests/corpus/real/Sony_HDR-HC3*
+
+__pycache__/
+*.pyc
