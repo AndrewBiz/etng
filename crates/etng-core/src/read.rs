@@ -6,7 +6,9 @@ use std::path::{Path, PathBuf};
 
 use memmap2::Mmap;
 
-use crate::formatting::{format_datetime, format_permissions, format_unix};
+use crate::formatting::format_datetime;
+#[cfg(unix)]
+use crate::formatting::{format_permissions, format_unix};
 use crate::jpeg;
 use crate::model::{FileReport, SystemFields, Tag, Value};
 use crate::options::ReadOptions;
@@ -955,6 +957,7 @@ fn parse_levels(text: &str) -> Option<[i64; 4]> {
 }
 
 fn system_fields(path: &Path, metadata: &fs::Metadata) -> SystemFields {
+    #[cfg(unix)]
     use std::os::unix::fs::MetadataExt;
 
     let file_name = path
@@ -965,15 +968,36 @@ fn system_fields(path: &Path, metadata: &fs::Metadata) -> SystemFields {
         .parent()
         .map(|parent| parent.to_string_lossy().to_string())
         .unwrap_or_default();
+
+    #[cfg(unix)]
+    let (file_inode_change_date, file_permissions, file_mode) = (
+        format_unix(metadata.ctime(), metadata.ctime_nsec() as u32),
+        format_permissions(metadata.mode() & 0o7777, metadata.is_dir()),
+        metadata.mode(),
+    );
+    #[cfg(not(unix))]
+    let (file_inode_change_date, file_permissions, file_mode) = {
+        let readonly = metadata.permissions().readonly();
+        (
+            format_datetime(metadata.created().ok()),
+            if readonly {
+                "-r--r--r--".to_string()
+            } else {
+                "-rw-rw-rw-".to_string()
+            },
+            0,
+        )
+    };
+
     SystemFields {
         file_name,
         directory,
         file_size: metadata.len(),
         file_modify_date: format_datetime(metadata.modified().ok()),
         file_access_date: format_datetime(metadata.accessed().ok()),
-        file_inode_change_date: format_unix(metadata.ctime(), metadata.ctime_nsec() as u32),
-        file_permissions: format_permissions(metadata.mode() & 0o7777, metadata.is_dir()),
-        file_mode: metadata.mode(),
+        file_inode_change_date,
+        file_permissions,
+        file_mode,
         file_type: String::new(),
         file_type_extension: String::new(),
         mime_type: String::new(),
