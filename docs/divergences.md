@@ -1,119 +1,153 @@
-# Documented divergences from ExifTool 13.55
+# Documented divergences and conscious limitations
+
+Status: **v0.28.0**, 2026-11-28.
 
 `cargo xtask compare` reports **0 divergences** outside the groups and keys
-listed here. Entries are deliberate scope decisions, not silent bugs.
+listed here. The entries below are deliberate scope decisions and known
+limitations, not silent bugs. They were collected from the parity corpus,
+the phtools integration suite and a full-collection audit on 19 files.
 
-## Vendor / container groups not modelled
+## Read mode
 
-| group | status | reason |
+### Vendor and container groups
+
+| group | status | limitation |
 | --- | --- | --- |
-| `Apple:` | partial | Flat IFD subset only. Complex plist payloads (`AEMatrix`, `RunTime*`, `AccelerationVector`) and exiftool's derived Apple sub-tags are skipped. |
-| `QuickTime:` | partial | CR3 movie header/tracks and HEIC ftyp/hvcC/ipco properties are read natively; other QuickTime containers and auxiliary images remain out of scope. |
-| `ICC_Profile:`, `ICC-header:`, `ICC-meas:`, `ICC-view:` | supported | Header and common tags are read from JPEG APP2, TIFF `0x8773` and HEIC `colr/prof`; uncommon tag types are skipped. |
+| `Apple:` | partial | Flat IFD subset only. `RunTime*`, `AccelerationVector`, `AEMatrix` and plist-backed derived tags are skipped. |
+| `QuickTime:` | partial | CR3 movie/track headers and HEIC `ftyp`/`hvcC`/`colr`/`ispe`/`irot`/`pixi`/`auxC`/`mdat` are native. Full track tables, codecs and auxiliary images are not. `CompatibleBrands` is a string, not a JSON array. |
 | `Meta:` | absent | HEIF meta-box internals (`MetaImageSize`, `PrimaryItemReference`). |
-| `IFD1:` | partial | Thumbnail IFD tags are emitted, including real `ThumbnailImage` bytes (JPEG/TIFF/HEIC); only `ThumbnailOffset` differs because exiftool reports an adjusted base offset. |
+| `IFD1:` | partial | Thumbnail tags and real `ThumbnailImage` bytes are emitted. `ThumbnailOffset` may differ because exiftool reports an adjusted base offset. |
+| `ICC_Profile:` / `ICC-header:` / `ICC-meas:` / `ICC-view:` | supported/partial | Common tags from JPEG APP2, TIFF `0x8773` and HEIC `colr/prof`. Uncommon tag types are skipped. |
 | `Vivo:` | absent | Vivo JSON metadata blob is not decoded. |
 
-## Known missing or changed composite/derived tags
+### Remaining Composite / derived gaps
 
-`Composite:GPSAltitude`, `Composite:FocalLength35efl` (sensor-based 35 mm
-factor), `Composite:Flash`, `Composite:LensID` for Nikon,
-`Composite:CircleOfConfusion`, `Composite:FOV`, `Composite:HyperfocalDistance`,
-`Composite:ScaleFactor35efl`, `Composite:SubSec*`,
-`Composite:RunTimeSincePowerUp`, `File:Comment`,
-`ExifIFD:MakerNoteUnknownText`, `XMP-photoshop:History`,
-`XMP-xmpMM:DocumentID`, `XMP-exif:Flash*`, `XMP-crs:ToneCurve`,
-`XMP-tiff:BitsPerSample`, `XMP-tiff:Orientation`.
+Implemented in v0.28.0 and no longer limitations: `Composite:CircleOfConfusion`,
+`FOV`, `HyperfocalDistance`, `ScaleFactor35efl`, `GPSAltitude`,
+`SubSecDateTimeOriginal`/`SubSecCreateDate`/`SubSecModifyDate` and basic
+`RedBalance`/`BlueBalance` when `WB_RGGBLevels` exists.
 
-Reasons: values require sensor geometry, vendor-specific structures, or
-multi-valued JSON arrays that the current model does not represent.
+Still missing or approximate:
 
-## Hostile inputs skipped in the golden diff
+- `Composite:DOF` — needs a reliable focus distance; not derived yet.
+- `Composite:Lens`, `Composite:Lens35efl` — only partly derived from
+  `MinFocalLength`/`MaxFocalLength`.
+- `Composite:LensID` — exact lens-name mapping is vendor-specific. The native
+  value can differ from exiftool for Canon RF/EF and Sony lenses.
+- `Composite:DriveMode`, `Composite:ShootingMode` — vendor-specific mappings.
+- `Composite:SubSecModifyDate` — not emitted for a few files where only some
+  SubSec fields exist.
+- `Composite:RunTimeSincePowerUp` and Apple `RunTimeEpoch/Flags/Scale/Value` —
+  Apple plist/runtime fields are not decoded.
+- Sony `RedBalance`/`BlueBalance` when only Sony-private WB levels are present.
+- `ExifIFD:LensInfo` formatting and several Canon `Composite`/`LensInfo`
+  value conventions.
+- XMP edge tags such as `XMP-photoshop:History`, `XMP-xmpMM:DocumentID`,
+  `XMP-exif:Flash*`, `XMP-crs:ToneCurve`, `XMP-tiff:BitsPerSample`,
+  `XMP-tiff:Orientation`.
 
-`broken.jpg`, `endless_loop.jpg`, `invalid-gps` are deliberately malformed.
-etng must terminate quickly and produce a partial report; exiftool recovers
-more tags. These files are exercised for safety (no panic/OOM/hang), not for
-tag parity.
+On the 19-file audit corpus this leaves about **1490 missing tags, 108 extra
+tags and 333 value differences**; nearly all are vendor MakerNote or derived
+tags. These numbers are a snapshot, not a contract.
 
-## Behavioural notes
+### MakerNotes and preview offsets
 
-- **Warning text** differs (`ExifTool:Warning` is masked in the comparator);
-  etng emits its own diagnostics.
-- **Tag order** follows etng's deterministic parse order. It matches exiftool
-  on the corpus but is not guaranteed byte-for-byte for every format.
-- **Print conversions** come from `exiftool -listx` `<values>` plus hand-written
-  rules (ExposureTime, ApertureValue/MaxApertureValue, FNumber,
-  ShutterSpeedValue, FocalLength/FocalLengthIn35mmFormat, FocalPlane*Resolution,
-  GPS coordinates/altitude/time, LensInfo, version words). Tags outside that
-  set fall back to the raw value; `-n` always yields the machine value.
-- **MakerNotes** support is a subset: Canon, Nikon, Sony and a flat Apple IFD.
-  Canon notes are now parsed relative to the TIFF header (JPEG/CR2/CR3), including
-  nested AF/Lighting/Time tables and ColorData WB levels for versions
-  32/33/34/48/64/65. FilterInfo, full CanonCustom and ColorData in CR3 Track4 are
-  still missing. Unknown vendors produce a warning and no tags.
-- **ARW** is detected via `Make=SONY` + extension; the first SubIFD and
-  `PreviewImage` are read natively. The encrypted SR2SubIFD block and some Sony
-  binary tables are not decoded yet.
-- **PNG** reads IHDR, eXIf, iTXt/tEXt XMP, sRGB and tIME natively.
-- **MOV** reads ftyp and the movie header (dates, duration, mdat); tracks and
-  codec tables are not covered.
-- **MTS/M2TS** is demuxed natively; H.264 SEI MDPM supplies date/time and GPS.
-  `M2TS:Duration`, codecs and tracks are not covered yet.
-- **DNG/NEF/CR2 detection** uses the file extension to disambiguate TIFF-family
-  containers when the signature alone is ambiguous (exiftool does the same for
-  extension-based TIFF variants). CR2 preview tags (273/279) are re-interpreted
-  as `PreviewImageStart`/`PreviewImageLength`, matching exiftool; `-b` returns
-  the real preview bytes.
-- **`-b` and fallback**: binary mode never delegates to the system exiftool, so
-  formats that rely on fallback (for example CR3) produce no binary output.
-  EXIF-embedded thumbnails and CR2 previews are extracted natively.
-- **`-b` scalar values** are printed without print conversion (`-Orientation`
-  yields `1`), and selected tags are concatenated in argument order, matching
-  exiftool. JSON mode emits binary values as `"base64:<data>"`.
-- **`-b` without a tag selection** follows etng's stored values. Tags kept as
-  normalized strings (for example `ExifVersion` or `YCbCrSubSampling`) may
-  differ from exiftool's raw byte-list form; use `-b -TAG` for extraction.
-- **CSV columns** are the union of etng's emitted tags. Groups documented as
-  partial (`Apple:`, `QuickTime:`, `Meta:`) therefore add fewer columns, so a
-  CSV header can be shorter than exiftool's. Shared cells inherit the value
-  differences listed above (`ThumbnailOffset`, `FocalLength35efl`, …).
-- **CSV without `-TAG`** reads the input twice: the first pass collects column
-  names, the second writes rows. Memory stays bounded; `-TAG` uses one pass.
-- **`-x`** filters output only: it removes fields and CSV columns but does not
-  skip parsing or composite computation, matching exiftool semantics.
-- **CR3 nested Canon tables**: native parsing now covers CameraSettings, ShotInfo,
-  Processing, SensorInfo, FocalLength, AFMicroAdj, AFInfo/2, AFConfig,
-  LightingOpt, VignettingCorr2, TimeInfo, MultiExp, HDRInfo and Ambience
-  (Canon 185 tags vs 183 in exiftool on `canon-r6.cr3`). CTMD Track4 is parsed
-  too, giving 548 of 577 exiftool tags on an R50 CR3 (was 393). CanonCustom and
-  complex Composite derivations are still approximate, so `auto` mode keeps the
-  exiftool delegate for full JSON/CSV parity. `--fallback=never` exposes the
-  native subset; `-b` never delegates.
-- **HEIC QuickTime**: `CompatibleBrands` is a string, not a JSON array;
-  `Meta:MetaImageSize` is not decoded. Other HEIC QuickTime fields (hvcC, colr,
-  ispe, irot, pixi, auxC, mdat) are native.
-- **XMP multi-values** are joined with `, ` and represented as strings, except
-  booleans (`True`/`False` → JSON `true`/`false`) and numeric/rational strings
-  which become JSON numbers.
-- **Fuzzing**: a deterministic mutation harness (`tests/mutations.rs`) runs
-  with every test suite; a full `cargo-fuzz` campaign is not part of this
-  change.
+- MakerNote support is a subset: Canon, Nikon, Sony and a flat Apple IFD.
+  Unknown vendors produce a warning and no vendor tags.
+- Canon nested tables cover CameraSettings, ShotInfo, Processing, SensorInfo,
+  FocalLength, AFMicroAdj, AFInfo/2, AFConfig, LightingOpt, VignettingCorr2,
+  TimeInfo, MultiExp, HDRInfo and Ambience. CanonCustom, some ColorData in CR3
+  Track4 and complex Canon composites remain approximate.
+- Sony ARW: first SubIFD and `PreviewImage` are native; the encrypted
+  SR2SubIFD block and some Sony binary tables are not decoded.
+- **Sony JPEG `PreviewImage` is the only known absolute MakerNote preview
+  offset that needs shifting when APP1 grows.** It is MakerNote `0x2001` and is
+  adjusted by the file-size delta for date and text writes.
+- Canon JPEG MPF offsets are relative to the MPF header, and CR2/ARW preview
+  offsets are TIFF-relative; append-at-end or in-place writes leave them valid.
+  A stress audit found no new preview warnings for Canon JPEG, iPhone JPEG,
+  CR2, ARW, HEIC or CR3 after sidecar growth.
+- No universal MakerNote offset repair is enabled: Nikon, Panasonic, Olympus,
+  Fujifilm and Samsung samples are needed before adding one. CR3 may retain the
+  pre-existing `Odd offset for ExifIFD tag 0x9011 OffsetTimeOriginal` warning.
 
 ## Write mode
 
-- Existing EXIF date fields are rewritten; missing `DateTimeOriginal`,
-  `CreateDate` and `ModifyDate` are inserted (ExifIFD / IFD0).
-- JPEG XMP/IPTC date and MWG text fields are updated or created.
-- `Keywords`/`Creator` accept repeated flags and write lists (XMP Bag/Seq,
-  repeated IPTC records, EXIF Artist joined with `; `).
-- `Photoshop:IPTCDigest` is refreshed after IPTC changes (MD5 of the IIM block).
-- `CountryCode`/`WorldRegion` are XMP-only; `CodedCharacterSet` is IPTC 1:90;
-  `ImageUniqueID` is ExifIFD 0xA420; GPS tags are written to the EXIF GPS IFD;
-  `Collections` is an XMP `mwg-coll` Bag of structs.
-- JPEG and TIFF-family containers only; HEIC/CR3/MOV writes are not implemented.
-- `FileModifyDate` uses local time and is set after the atomic file replacement.
+| format | dates | MWG text / GPS | notes |
+| --- | --- | --- | --- |
+| JPEG | yes | yes | EXIF dates; XMP/IPTC sidecars; GPS IFD; Sony preview offset repaired; IPTC digest refreshed. |
+| TIFF / DNG / NEF / CR2 / ARW | yes | no | Dates updated in place; missing dates appended. No JPEG sidecars. |
+| PNG | yes | no | `eXIf` chunk updated or created before `IDAT`; CRC rebuilt. XMP dates in `iTXt`/`tEXt` are not updated. |
+| HEIC / CR3 | yes | no | Existing dates updated; missing dates appended (EXIF item / CMT box). Full CR3 native read still falls back in `auto`. |
+| MOV | yes | no | `mvhd` dates and Apple `Keys:CreationDate` in-place where present. Tracks/codecs are not rewritten. |
+| MTS / M2TS | **no** | no | Reading is native, but H.264 SEI MDPM date writing is not implemented. `phfixdto` therefore reports `date writing is not supported for MTS`; phtools itself may still exit 0. |
+
+Details:
+
+- `DateTimeOriginal`/`CreateDate` are written to ExifIFD and `ModifyDate` to
+  IFD0 when the destination format has those structures.
+- PNG date writing is EXIF-authoritative: XMP date properties in PNG are left
+  unchanged rather than silently desynchronised.
+- MWG text tags, `Collections` and GPS are JPEG-only. Text/GPS writes to
+  TIFF-family, HEIC, CR3, MOV, PNG or MTS are rejected explicitly.
+- `FileModifyDate` is applied after the atomic replacement; it is independent
+  of container support.
+- All writes are atomic (temp file + rename), preserve permissions and do not
+  rewrite unknown MakerNote bytes.
+
+## phtools integration
+
+The `tools/exiftool-shim` makes phtools use etng for reads and `-@` writes.
+
+- Full local suite: **64/65** scenarios with etng. The remaining `phrename`
+  case uses IPTC `DateCreated` (`20020202`) and expects a `DateTime`; it fails
+  with the real exiftool too, so it is a phtools limitation.
+- CI runs the stable subset (`phgettags` + `phfixdto`): **12/12 scenarios,
+  60/60 steps**.
+- phtools does not support CR2: `phls` omits it and `phrename` says
+  `unsupported type`; this is outside etng.
+- `phrename` uses QuickTime `CreateDate` (UTC) for MOV rather than Apple
+  `Keys:CreationDate` (local); this is phtools/MiniExiftool behaviour.
+- MTS date failures are surfaced by etng, but phtools currently exits 0 for
+  that command.
+- The shim deliberately drops exiftool-only read options (`-c`, `-charset`,
+  `-lang`, `-api`, `-d`) and falls back to a real exiftool only when
+  `ETNG_SHIM_FALLBACK=1`; fallback is off by default.
+
+## CLI and output
+
+- `-json`, `-csv`, `-b`, `-x`, `-G1`, `-list` and `-listw` are implemented.
+  `-X`, `-php`, `-html` and other serializers are not.
+- `-listw` prints all known tag names, not a strictly exact writable-tag set.
+- Warning text is etng's own; the comparator masks warnings.
+- Tag order follows etng's deterministic parse order. It matches exiftool on the
+  corpus but is not guaranteed byte-for-byte for every file.
+- Print conversions come from `exiftool -listx` values plus handwritten rules;
+  unsupported print conversions fall back to the raw value. `-n` always gives
+  the machine value.
+- `-b` never delegates to exiftool; formats that rely on fallback (notably some
+  CR3 reads) produce no binary output. EXIF thumbnails and CR2/ARW previews are
+  native.
+- CSV columns are the union of etng's emitted tags, so partial groups can
+  produce a shorter header than exiftool. `-csv` without `-TAG` reads the input
+  twice; `-TAG` uses one pass.
+- XMP multi-values are joined with `, ` and represented as strings, except
+  booleans and numeric/rational strings.
+
+## Safety and verification
+
+- Malformed fixtures (`broken.jpg`, `endless_loop.jpg`, `invalid-gps`) are
+  exercised for termination and partial output, not tag parity.
+- A deterministic mutation harness (`tests/mutations.rs`) runs with the test
+  suite; a full `cargo-fuzz` campaign is not part of the release gate.
+- Before release: `cargo test --workspace`, clippy with `-D warnings`, fmt,
+  `TZ=Europe/Moscow cargo run -p xtask -- compare` and
+  `tools/corpus-audit.py` on copies.
 
 ## Not implemented by design
 
-Write mode, `-csv`/`-X`/`-php`/`-html` output, video/audio containers, XMP/ICC
-writing, `nom-exif` as a second backend (own ISO-BMFF walker is used instead).
+- Video/audio track and codec tables (including H.264 MTS date writing).
+- XMP/ICC writing outside the JPEG MWG path.
+- Vendor-specific preview-offset shifts without a representative sample.
+- A second EXIF backend; etng keeps its own ISO-BMFF walker.
+- Full exiftool serializer compatibility (`-X`, `-php`, `-html`).
