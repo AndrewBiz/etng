@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.28.1 — 2026-11-28
+
+### Документация
+
+- `docs/divergences.md` синхронизирован с v0.28.0: read/write matrix,
+  оставшиеся Composite/MakerNote gaps, phtools-ограничения, MTS.
+
 ## 0.28.0 — 2026-11-28
 
 ### Добавлено
