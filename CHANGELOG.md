@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.28.2 — 2026-11-28
+
+### Исправлено
+
+- `etng-core` собирается под Windows: системные поля больше не требуют
+  Unix-only `MetadataExt`. Linux-вывод не изменился.
+- Windows fallback: `FileInodeChangeDate` из creation time,
+  `FilePermissions` из readonly, `FileMode = 0`.
+
 ## 0.28.1 — 2026-11-28
 
 ### Документация
